@@ -1,10 +1,10 @@
 /* Service worker: fa funzionare Quaderno offline.
    Quando aggiorni i file dell'app, cambia il numero di versione qui sotto. */
-const CACHE = 'quaderno-v2';
+const CACHE = 'quaderno-v3';
 const SHELL = ['./', 'index.html', 'app.css', 'md.js', 'ink.js', 'attach.js', 'app.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'manifest.webmanifest', 'icon.svg', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -26,7 +26,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const hit = await cache.match(req, { ignoreSearch: sameOrigin });
-      const net = fetch(req)
+      const net = fetch(sameOrigin ? new Request(req.url, { cache: 'no-cache' }) : req)
         .then((res) => {
           if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone());
           return res;

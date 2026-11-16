@@ -302,7 +302,32 @@
       this.svg.addEventListener('contextmenu', this._ctx);
     }
 
-    start() { this.active = true; this.svg.classList.add('inking'); }
+    /* Safari ignora touch-action sugli elementi SVG: lo imposto anche sui contenitori HTML e blocco lo scorrimento a mano. */
+    start() {
+      this.active = true;
+      this.svg.classList.add('inking');
+      const p1 = this.svg.parentElement;
+      this.lockEls = [this.svg, p1, p1 && p1.parentElement].filter(Boolean);
+      this.lockEls.forEach((el) => { el.style.touchAction = 'none'; });
+      this._tp = (e) => { if (this.active && e.cancelable) e.preventDefault(); };
+      this.svg.addEventListener('touchstart', this._tp, { passive: false });
+      this.svg.addEventListener('touchmove', this._tp, { passive: false });
+    }
+
+    lockScroll() {
+      if (this.scroller && !this.scrollLocked) {
+        this.scrollLocked = true;
+        this.prevOverflow = this.scroller.style.overflowY;
+        this.scroller.style.overflowY = 'hidden';
+      }
+    }
+
+    unlockScroll() {
+      if (this.scroller && this.scrollLocked) {
+        this.scrollLocked = false;
+        this.scroller.style.overflowY = this.prevOverflow || '';
+      }
+    }
 
     stop() {
       this.active = false;
@@ -310,6 +335,10 @@
       this.sel.clear();
       this.renderSel();
       this.svg.classList.remove('inking');
+      this.unlockScroll();
+      if (this.lockEls) this.lockEls.forEach((el) => { el.style.touchAction = ''; });
+      this.svg.removeEventListener('touchstart', this._tp);
+      this.svg.removeEventListener('touchmove', this._tp);
       this.svg.removeEventListener('pointerdown', this._down);
       this.svg.removeEventListener('pointermove', this._move);
       this.svg.removeEventListener('pointerup', this._up);
@@ -445,6 +474,7 @@
       e.preventDefault();
       try { this.svg.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
       this.pid = e.pointerId;
+      this.lockScroll();
       const p = this.pt(e);
       const tool = state.tool;
 
@@ -547,8 +577,17 @@
       if (!this.mode || e.pointerId !== this.pid) return;
       clearTimeout(this.timer);
       const mode = this.mode;
+      const cancelled = e.type === 'pointercancel';
       this.mode = null;
       this.pid = null;
+      this.unlockScroll();
+      if (cancelled && (mode === 'draw' || mode === 'lasso' || mode === 'move')) {
+        /* il browser ha interrotto il gesto (per esempio per scorrere): scarto, niente puntini */
+        if (mode === 'draw') { if (this.liveEl) this.liveEl.remove(); this.cur = null; }
+        else if (mode === 'lasso') { if (this.lassoEl) this.lassoEl.remove(); this.lassoEl = null; this.lasso = null; }
+        else { this.strokes = this.moveOrig; this.hist.pop(); this.renderAll(); }
+        return;
+      }
       if (mode === 'draw') {
         const s = this.cur;
         this.cur = null;

@@ -261,6 +261,7 @@
     },
   };
   ATT.init(Q);
+  $('#appVer').textContent = 'v3 (penna iPad)';
 
   /* ------------------------------------------------------------------ barra laterale */
   function buildTree(list) {

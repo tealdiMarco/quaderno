@@ -262,3 +262,6 @@ dialog input { display: block; width: 100%; margin-top: 4px; height: 42px; paddi
   .inkbar { padding: 6px 8px; }
   .inkbar .icol { width: 36px; }
 }
+
+/* Safari non rispetta touch-action sugli SVG: lo applico anche ai contenitori HTML mentre si disegna */
+.inkblock.active, .inkblock.active .paper, .media.active, .pagebox.active { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
