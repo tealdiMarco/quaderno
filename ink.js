@@ -7,23 +7,40 @@
   const NS = 'http://www.w3.org/2000/svg';
   const COLORS = [
     { id: 'ink', hex: '#2B2620', swatch: '#F6F1E7', label: 'Nero' },
+    { id: '#8A8478', hex: '#8A8478', swatch: '#8A8478', label: 'Grigio' },
+    { id: '#D83A34', hex: '#D83A34', swatch: '#D83A34', label: 'Rosso' },
     { id: '#D2693F', hex: '#D2693F', swatch: '#D2693F', label: 'Terracotta' },
-    { id: '#4A86F7', hex: '#4A86F7', swatch: '#4A86F7', label: 'Blu' },
-    { id: '#3FA66B', hex: '#3FA66B', swatch: '#3FA66B', label: 'Verde' },
     { id: '#F2C230', hex: '#F2C230', swatch: '#F2C230', label: 'Giallo' },
+    { id: '#9BC53D', hex: '#9BC53D', swatch: '#9BC53D', label: 'Lime' },
+    { id: '#3FA66B', hex: '#3FA66B', swatch: '#3FA66B', label: 'Verde' },
+    { id: '#14A3A3', hex: '#14A3A3', swatch: '#14A3A3', label: 'Turchese' },
+    { id: '#4A86F7', hex: '#4A86F7', swatch: '#4A86F7', label: 'Blu' },
+    { id: '#2F3FA8', hex: '#2F3FA8', swatch: '#2F3FA8', label: 'Indaco' },
+    { id: '#7B4FD0', hex: '#7B4FD0', swatch: '#7B4FD0', label: 'Viola' },
+    { id: '#E0457B', hex: '#E0457B', swatch: '#E0457B', label: 'Rosa' },
   ];
   const PEN = [2.5, 4, 7];
   const HL = [16, 26, 40];
+  const PEN_PRESETS = [1.5, 2.5, 4, 6, 9, 14];
+  const HL_PRESETS = [10, 16, 26, 36, 48, 60];
+  const PEN_RANGE = [1, 20];
+  const HL_RANGE = [6, 64];
   const ERASER = 18;
   const TOOLS = ['pen', 'hl', 'eraser', 'shape', 'lasso'];
 
-  const state = { tool: 'pen', color: 'ink', size: 1, finger: false };
+  const HEX_RE = /^#[0-9a-f]{6}$/i;
+  const state = { tool: 'pen', color: 'ink', size: 1, pw: null, hw: null, saved: [], finger: false };
   try {
     Object.assign(state, JSON.parse(localStorage.getItem('quaderno.ink') || '{}'));
   } catch (e) { /* nessuna preferenza salvata */ }
   if (!TOOLS.includes(state.tool)) state.tool = 'pen';
-  if (!COLORS.some((c) => c.id === state.color)) state.color = 'ink';
+  if (state.color !== 'ink' && !HEX_RE.test(state.color)) state.color = 'ink';
   if (![0, 1, 2].includes(state.size)) state.size = 1;
+  const clampW = (v, r, d) => (Number.isFinite(Number(v)) && v !== null ? Math.max(r[0], Math.min(r[1], Number(v))) : d);
+  state.pw = clampW(state.pw, PEN_RANGE, PEN[state.size]);
+  state.hw = clampW(state.hw, HL_RANGE, HL[state.size]);
+  if (!Array.isArray(state.saved)) state.saved = [];
+  state.saved = state.saved.filter((c) => HEX_RE.test(c)).slice(0, 12);
   const saveState = () => { try { localStorage.setItem('quaderno.ink', JSON.stringify(state)); } catch (e) { /* ok */ } };
 
   /* La penna ha priorità: mentre è in uso (e subito dopo) i tocchi delle dita vengono ignorati (palm rejection). */
@@ -505,7 +522,7 @@
         this.mode = 'draw';
         this.held = false;
         const hl = tool === 'hl';
-        this.cur = { id: nextId(), t: hl ? 'hl' : 'pen', c: state.color, w: (hl ? HL : PEN)[state.size], pts: [p] };
+        this.cur = { id: nextId(), t: hl ? 'hl' : 'pen', c: state.color, w: hl ? state.hw : state.pw, pts: [p] };
         this.liveEl = buildStrokeEl(this.cur, false);
         this.layer.append(this.liveEl);
         this.holdAnchor = p;
@@ -626,7 +643,7 @@
     }
   }
 
-  const api = { COLORS, PEN, HL, state, saveState, Editor, parseDrawing, drawingSvg, emptyDrawing, renderStatic, toData, fromData, recognize, penBusy, hexOf };
+  const api = { COLORS, PEN, HL, PEN_PRESETS, HL_PRESETS, PEN_RANGE, HL_RANGE, state, saveState, Editor, parseDrawing, drawingSvg, emptyDrawing, renderStatic, toData, fromData, recognize, penBusy, hexOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.INK = api;
 })(typeof window !== 'undefined' ? window : globalThis);

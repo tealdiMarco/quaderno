@@ -10,7 +10,7 @@
   const MAX_BIN = ATT.MAX;
   const MAX_PULL = 40 * 1024 * 1024;
   const MIME = ATT.MIME;
-  const SYNC_RE = /\.(md|svg|png|jpe?g|gif|webp|avif|bmp|pdf)$/i;
+  const SYNC_RE = /(\.(md|svg|png|jpe?g|gif|webp|avif|bmp|pdf)|\.p\d+\.note\.txt)$/i;
 
   /* ------------------------------------------------------------------ utilità */
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -94,6 +94,7 @@
   try { settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch (e) { settings = {}; }
   let current = null;
   let mode = 'preview';
+  try { if (localStorage.getItem('quaderno.mode') === 'split') mode = 'split'; } catch (e) { /* ok */ }
   let query = '';
   let tagFilter = null;
   let open = new Set();
@@ -203,7 +204,7 @@
   /* Ponte verso attach.js */
   const Q = {
     files: notes,
-    scroller: $('#noteView'),
+    get scroller() { return effMode() === 'split' ? $('#preview') : $('#noteView'); },
     toast,
     note: () => (current && notes.get(current)) || null,
     getFile: (p) => { const n = notes.get(p); return n && !n.deleted ? n : null; },
@@ -241,7 +242,7 @@
     insertBlock(md) {
       const n = Q.note();
       if (!n) return;
-      if (mode === 'edit') {
+      if (mode !== 'preview') {
         const ta = $('#editor');
         const s = ta.selectionStart;
         const before = ta.value.slice(0, s);
@@ -255,13 +256,13 @@
       persist(n);
       updateStatus();
       scheduleSync();
-      mode = 'preview';
+      if (mode === 'edit') mode = 'preview';
       renderMain();
       renderSidebar();
     },
   };
   ATT.init(Q);
-  $('#appVer').textContent = 'v3 (penna iPad)';
+  $('#appVer').textContent = 'v4 (tema, vista affiancata, note per pagina)';
 
   /* ------------------------------------------------------------------ barra laterale */
   function buildTree(list) {
@@ -365,7 +366,7 @@
     ATT.stopInk();
     const n = notes.get(path);
     current = n && !n.deleted && isMd(n) ? path : null;
-    mode = newMode || 'preview';
+    mode = newMode || (mode === 'split' ? 'split' : 'preview');
     if (current) localStorage.setItem(LAST_KEY, current);
     query = '';
     $('#search').value = '';
@@ -381,13 +382,18 @@
     if (toEnd) { ed.setSelectionRange(ed.value.length, ed.value.length); ed.scrollTop = ed.scrollHeight; }
   }
 
+  const narrowMq = window.matchMedia('(max-width: 699px)');
+  const effMode = () => (mode === 'split' && narrowMq.matches ? 'edit' : mode);
+
   function setMode(m) {
     if (!current) return;
     ATT.stopInk();
     mode = m;
+    try { localStorage.setItem('quaderno.mode', m); } catch (e) { /* ok */ }
     renderMain();
-    if (m === 'edit') focusEditor(false);
+    if (m !== 'preview') focusEditor(false);
   }
+  narrowMq.addEventListener('change', () => { if (current && mode === 'split') { ATT.stopInk(); renderMain(); } });
 
   function renderMain() {
     const n = current && notes.get(current);
@@ -396,27 +402,30 @@
     $('#noteView').hidden = !has;
     $('#modeSwitch').hidden = !has;
     $('#btnNoteMenu').hidden = !has;
-    $('#toolbar').hidden = !(has && mode === 'edit');
-    $('#addRow').hidden = !(has && mode === 'preview');
+    const em = effMode();
+    $('#toolbar').hidden = !(has && em !== 'preview');
+    $('#addRow').hidden = !(has && em === 'preview');
+    $('#noteView').classList.toggle('split', has && em === 'split');
+    ensureSplitter();
     const crumbs = $('#crumbs');
     crumbs.replaceChildren();
     if (!has) return;
     const parts = n.path.replace(/\.md$/i, '').split('/');
     crumbs.append(parts.slice(0, -1).join(' / ') + (parts.length > 1 ? ' / ' : ''), h('strong', { style: 'color:var(--text);font-weight:500' }, parts[parts.length - 1]));
-    $('#modePreview').classList.toggle('on', mode === 'preview');
-    $('#modeEdit').classList.toggle('on', mode === 'edit');
-    $('#modePreview').setAttribute('aria-pressed', String(mode === 'preview'));
-    $('#modeEdit').setAttribute('aria-pressed', String(mode === 'edit'));
+    [['#modePreview', 'preview'], ['#modeEdit', 'edit'], ['#modeSplit', 'split']].forEach(([sel, m]) => {
+      $(sel).classList.toggle('on', em === m);
+      $(sel).setAttribute('aria-pressed', String(em === m));
+    });
     const ed = $('#editor');
     const pv = $('#preview');
-    ed.hidden = mode !== 'edit';
-    pv.hidden = mode !== 'preview';
-    if (mode === 'edit') {
+    ed.hidden = em === 'preview';
+    pv.hidden = em === 'edit';
+    if (em !== 'preview') if (ed.value !== n.content) ed.value = n.content;
+    if (em === 'edit') {
       $('#backlinks').hidden = true;
-      if (ed.value !== n.content) ed.value = n.content;
     } else {
       renderPreview(n);
-      renderBacklinks(n);
+      if (em === 'preview') renderBacklinks(n);
     }
   }
 
@@ -450,7 +459,58 @@
     persist(n);
     updateStatus();
     afterEdit();
+    if (effMode() === 'split') livePreview();
   });
+
+  /* vista affiancata: anteprima aggiornata mentre scrivi, scorrimento sincronizzato e divisore */
+  const livePreview = debounce(() => {
+    const n = current && notes.get(current);
+    if (!n || effMode() !== 'split' || ATT.inking()) return;
+    const pv = $('#preview');
+    const top = pv.scrollTop;
+    renderPreview(n);
+    pv.scrollTop = top;
+  }, 250);
+
+  let syncLock = 0;
+  const follow = (from, to) => {
+    if (effMode() !== 'split' || Date.now() < syncLock) return;
+    const max = from.scrollHeight - from.clientHeight;
+    const r = max > 0 ? from.scrollTop / max : 0;
+    syncLock = Date.now() + 80;
+    to.scrollTop = r * (to.scrollHeight - to.clientHeight);
+  };
+  $('#editor').addEventListener('scroll', () => follow($('#editor'), $('#preview')));
+  $('#preview').addEventListener('scroll', () => { if (!ATT.inking()) follow($('#preview'), $('#editor')); });
+
+  function setSplit(pct) {
+    pct = Math.max(25, Math.min(75, pct));
+    $('#noteView').style.setProperty('--split', pct + '%');
+    try { localStorage.setItem('quaderno.split', String(Math.round(pct))); } catch (e) { /* ok */ }
+  }
+  function ensureSplitter() {
+    let sp = $('#splitter');
+    if (!sp) {
+      sp = h('div', { id: 'splitter', class: 'splitter', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Trascina per ridimensionare', tabindex: '0' }, h('i', {}, h('b'), h('b'), h('b')));
+      $('#editor').after(sp);
+      let drag = false;
+      sp.addEventListener('pointerdown', (e) => { drag = true; sp.setPointerCapture(e.pointerId); e.preventDefault(); });
+      sp.addEventListener('pointerup', () => { drag = false; });
+      sp.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const r = $('#noteView').getBoundingClientRect();
+        setSplit(((e.clientX - r.left) / r.width) * 100);
+      });
+      sp.addEventListener('keydown', (e) => {
+        const cur = parseFloat(($('#noteView').style.getPropertyValue('--split') || '50')) || 50;
+        if (e.key === 'ArrowLeft') setSplit(cur - 3);
+        if (e.key === 'ArrowRight') setSplit(cur + 3);
+      });
+      const saved = Number(localStorage.getItem('quaderno.split'));
+      if (saved) setSplit(saved);
+    }
+    sp.hidden = effMode() !== 'split';
+  }
 
   /* clic nell'anteprima: link tra note, tag, checklist */
   $('#preview').addEventListener('click', (e) => {
@@ -538,6 +598,11 @@
     const b = $('#syncStatus');
     b.dataset.state = state;
     $('#syncText').textContent = text;
+    const tb = $('#btnSync');
+    tb.dataset.state = state;
+    tb.setAttribute('aria-label', 'Sincronizza ora. ' + text);
+    tb.title = text;
+    tb.querySelector('use').setAttribute('href', state === 'ok' ? '#i-cloudok' : '#i-cloud');
   }
 
   function updateStatus() {
@@ -605,6 +670,7 @@
   function recordFromRemote(path, bytes) {
     const base = { path, deleted: false, dirty: false, updated: Date.now() };
     if (/\.md$/i.test(path)) return { ...base, kind: 'md', content: dec.decode(bytes) };
+    if (/\.p\d+\.note\.txt$/i.test(path)) return { ...base, kind: 'text', content: dec.decode(bytes) };
     if (/\.svg$/i.test(path)) {
       const t = dec.decode(bytes);
       if (t.includes('data-quaderno')) return { ...base, kind: 'text', content: t };
@@ -736,9 +802,10 @@
     renderSidebar();
     const n = current && notes.get(current);
     if (!n) { ATT.stopInk(true); renderMain(); return; }
-    if (mode === 'preview') {
+    if (effMode() !== 'edit') {
       if (ATT.inking()) return;
       const dir = ATT.assetsDir(current);
+      if (effMode() === 'split' && !n.dirty && $('#editor').value !== n.content) $('#editor').value = n.content;
       if ([...changed].some((p) => p === current || p.startsWith(dir) || !/\.md$/i.test(p))) renderMain();
     } else if (!n.dirty && $('#editor').value !== n.content) $('#editor').value = n.content;
   }
@@ -852,19 +919,117 @@
     scheduleSync();
   }
 
-  /* ------------------------------------------------------------------ cassetto (telefono) e collegamenti */
+  /* ------------------------------------------------------------------ barra laterale (fissa, a scomparsa o cassetto) e tema */
   const isMobile = () => window.matchMedia('(max-width: 800px)').matches;
-  function openDrawer() { if (!isMobile()) return; $('#sidebar').classList.add('open'); $('#scrim').hidden = false; }
-  function closeDrawer() { $('#sidebar').classList.remove('open'); $('#scrim').hidden = true; }
+  const SIDE_KEY = 'quaderno.side';
+  let sideHidden = false;
+  try {
+    const v = localStorage.getItem(SIDE_KEY);
+    sideHidden = v ? v === 'hidden' : window.innerWidth < 1000;
+  } catch (e) { sideHidden = false; }
 
-  $('#btnMenu').addEventListener('click', openDrawer);
+  function applySide() {
+    const hide = sideHidden && !isMobile();
+    document.body.classList.toggle('side-hidden', hide);
+    if (!hide && !isMobile()) { $('#sidebar').classList.remove('open'); $('#scrim').hidden = true; }
+    syncSideUi();
+  }
+  function syncSideUi() {
+    const open = $('#sidebar').classList.contains('open');
+    $('#sideHandle').hidden = !(document.body.classList.contains('side-hidden') && !open);
+    const pin = $('#btnPin');
+    const hiddenMode = document.body.classList.contains('side-hidden');
+    pin.setAttribute('aria-label', hiddenMode ? 'Fissa la barra laterale' : 'Nascondi la barra laterale');
+    pin.title = pin.getAttribute('aria-label');
+    pin.querySelector('use').setAttribute('href', hiddenMode ? '#i-pin' : '#i-hide');
+  }
+  function openDrawer() {
+    if (!isMobile() && !document.body.classList.contains('side-hidden')) return;
+    $('#sidebar').classList.add('open');
+    $('#scrim').hidden = false;
+    syncSideUi();
+  }
+  function closeDrawer() { $('#sidebar').classList.remove('open'); $('#scrim').hidden = true; syncSideUi(); }
+  function setSideHidden(v) {
+    sideHidden = v;
+    try { localStorage.setItem(SIDE_KEY, v ? 'hidden' : 'shown'); } catch (e) { /* ok */ }
+    closeDrawer();
+    applySide();
+  }
+  window.addEventListener('resize', debounce(applySide, 150));
+
+  $('#btnMenu').addEventListener('click', () => {
+    if (isMobile()) { openDrawer(); return; }
+    if (!sideHidden) setSideHidden(true);
+    else if ($('#sidebar').classList.contains('open')) closeDrawer();
+    else openDrawer();
+  });
+  $('#btnPin').addEventListener('click', () => setSideHidden(!document.body.classList.contains('side-hidden')));
+  $('#sideHandle').addEventListener('click', openDrawer);
   $('#scrim').addEventListener('click', closeDrawer);
+  // trascinando dal bordo sinistro si apre la barra
+  let edge = null;
+  document.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    edge = t && t.clientX < 18 && !ATT.inking() ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    const t = e.changedTouches[0];
+    if (edge && t && t.clientX - edge.x > 60 && Math.abs(t.clientY - edge.y) < 60) openDrawer();
+    edge = null;
+  }, { passive: true });
+
+  const THEME_KEY = 'quaderno.theme';
+  let theme = 'auto';
+  try { const t = localStorage.getItem(THEME_KEY); if (t === 'light' || t === 'dark') theme = t; } catch (e) { /* ok */ }
+  function applyTheme() {
+    const root = document.documentElement;
+    if (theme === 'auto') delete root.dataset.theme; else root.dataset.theme = theme;
+    const dark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const col = dark ? '#1D1A16' : '#F6F1E7';
+    ['#metaTheme', '#metaThemeDark'].forEach((id) => { const m = $(id); if (m) { m.setAttribute('content', col); m.removeAttribute('media'); } });
+    const icon = theme === 'light' ? '#i-sun' : theme === 'dark' ? '#i-moon' : '#i-auto';
+    const label = 'Tema: ' + (theme === 'light' ? 'chiaro' : theme === 'dark' ? 'scuro' : 'come il dispositivo');
+    ['#btnTheme', '#btnTheme2'].forEach((id) => { const b = $(id); b.querySelector('use').setAttribute('href', icon); b.setAttribute('aria-label', label); b.title = label; });
+    document.querySelectorAll('#themeMenu [data-theme]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.theme === theme);
+      b.setAttribute('aria-checked', String(b.dataset.theme === theme));
+    });
+  }
+  function setTheme(t) {
+    theme = t;
+    try { if (t === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* ok */ }
+    applyTheme();
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'auto') applyTheme(); });
+  const themeMenu = $('#themeMenu');
+  function closeThemeMenu() { themeMenu.hidden = true; $('#btnTheme').setAttribute('aria-expanded', 'false'); }
+  function toggleThemeMenu(btn) {
+    if (!themeMenu.hidden) { closeThemeMenu(); return; }
+    const r = btn.getBoundingClientRect();
+    themeMenu.hidden = false;
+    const w = themeMenu.offsetWidth;
+    themeMenu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + 'px';
+    const below = r.bottom + 6;
+    themeMenu.style.top = (below + themeMenu.offsetHeight > window.innerHeight - 8 ? Math.max(8, r.top - themeMenu.offsetHeight - 6) : below) + 'px';
+    btn.setAttribute('aria-expanded', 'true');
+  }
+  $('#btnTheme').addEventListener('click', (e) => { e.stopPropagation(); toggleThemeMenu($('#btnTheme')); });
+  $('#btnTheme2').addEventListener('click', (e) => { e.stopPropagation(); toggleThemeMenu($('#btnTheme2')); });
+  themeMenu.addEventListener('click', (e) => { const b = e.target.closest('[data-theme]'); if (b) { setTheme(b.dataset.theme); closeThemeMenu(); } });
+  document.addEventListener('click', (e) => { if (!themeMenu.hidden && !themeMenu.contains(e.target)) closeThemeMenu(); });
+  applyTheme();
+  applySide();
+
   $('#btnNew').addEventListener('click', () => newNote());
   $('#emptyNew').addEventListener('click', () => newNote());
   $('#btnSettings').addEventListener('click', openSettings);
+  $('#btnSettings2').addEventListener('click', () => { closeDrawer(); openSettings(); });
   $('#syncStatus').addEventListener('click', () => sync(true));
+  $('#btnSync').addEventListener('click', () => sync(true));
   $('#modePreview').addEventListener('click', () => setMode('preview'));
   $('#modeEdit').addEventListener('click', () => setMode('edit'));
+  $('#modeSplit').addEventListener('click', () => setMode('split'));
 
   const importDlg = $('#importDlg');
   const askImport = () => importDlg.showModal();
@@ -887,11 +1052,11 @@
 
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
-    if (e.key === 'Escape') closeDrawer();
+    if (e.key === 'Escape') { closeDrawer(); closeThemeMenu(); }
     if (!mod) return;
     const k = e.key.toLowerCase();
     if (k === 'k') { e.preventDefault(); openDrawer(); $('#search').focus(); }
-    else if (k === 'e' && current) { e.preventDefault(); setMode(mode === 'edit' ? 'preview' : 'edit'); }
+    else if (k === 'e' && current) { e.preventDefault(); setMode(mode === 'preview' ? 'edit' : 'preview'); }
     else if (k === 's') { e.preventDefault(); sync(true); }
   });
 
@@ -909,7 +1074,7 @@ Qui scrivi in **markdown** e ritrovi tutto da telefono, iPad e computer. Le note
 ## Per iniziare
 
 - [x] Aprire Quaderno
-- [ ] Collegare GitHub (tocca la scritta in basso a sinistra)
+- [ ] Collegare GitHub (icona con i cursori in alto a destra)
 - [ ] Importare le vecchie note (icona con la freccia in su)
 
 ## Cosa puoi fare

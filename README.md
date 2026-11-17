@@ -66,8 +66,18 @@ Passi:
 
 ## Aggiornare l'app
 
-Dopo aver cambiato un file, modifica il numero di versione in `sw.js` (`quaderno-v2` diventa `quaderno-v3`) così i dispositivi scaricano la versione nuova.
+Dopo aver cambiato un file, modifica il numero di versione in `sw.js` (`quaderno-v3` diventa `quaderno-v4`) così i dispositivi scaricano la versione nuova.
 
 ## Licenze
 
 PDF.js (cartella `vendor`) è distribuito con licenza Apache 2.0, vedi `vendor/pdfjs-LICENSE.txt`.
+
+
+## Novità della versione 4
+
+- **Tema**: il bottone con il sole in alto apre un menu Chiaro / Scuro / Come il dispositivo (la scelta viene ricordata).
+- **Sincronizzazione**: ora ha il suo bottone (nuvola) in alto; le impostazioni di GitHub sono nell'icona con i cursori.
+- **Barra laterale a scomparsa**: il menu in alto (tre righe) la nasconde, la maniglia sul bordo sinistro (o il trascinamento dal bordo) la riapre sopra la nota e si richiude da sola quando scegli una nota. Il pulsante con la freccia/puntina nella barra la nasconde o la fissa.
+- **Affiancati**: Markdown a sinistra e anteprima a destra con aggiornamento in tempo reale, scorrimento sincronizzato e divisore trascinabile (da 700 px di larghezza in su).
+- **Colori e spessori**: il bottone con il pallino colorato nella barra del disegno apre un popover con 12 colori, la ruota dei colori (con codice esadecimale e "I miei colori") e lo spessore a cursore (penna 1–20, evidenziatore 6–64).
+- **PDF a schermo intero con note per pagina**: nel blocco PDF il pulsante con le quattro frecce apre il lettore con miniature, pagina grande e foglio "Note della pagina N" (testo + disegno). Salvati come `file.pdf.pN.note.txt` e `file.pdf.pN.notes.ink.svg`; un puntino sulle miniature segna le pagine con note.

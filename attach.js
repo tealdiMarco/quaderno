@@ -81,6 +81,9 @@
     '<symbol id="a-clip" viewBox="0 0 24 24"><path d="M20 11l-8 8a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></symbol>' +
     '<symbol id="a-prev" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>' +
     '<symbol id="a-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>' +
+    '<symbol id="a-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>' +
+    '<symbol id="a-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>' +
+    '<symbol id="a-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>' +
     '</svg>';
 
   /* ---------------------------------------------------------------- file: indirizzi e risoluzione */
@@ -98,7 +101,7 @@
     const m = new Map();
     for (const n of Q.files.values()) {
       if (n.deleted || !n.kind || n.kind === 'md') continue;
-      if (/\.ink\.svg$/i.test(n.path)) continue;
+      if (/\.ink\.svg$/i.test(n.path) || /\.note\.txt$/i.test(n.path)) continue;
       const b = baseName(n.path).toLowerCase();
       if (!m.has(b)) m.set(b, []);
       m.get(b).push(n.path);
@@ -201,7 +204,8 @@
     const prev = mkBtn('mbtn', 'Pagina precedente', 'a-prev');
     const next = mkBtn('mbtn', 'Pagina successiva', 'a-next');
     const annot = h('button', { type: 'button', class: 'mtxt' }, 'Annota');
-    const mbar = h('div', { class: 'mediabar' }, ic('i-file'), h('span', { class: 'mname' }, baseName(rec.path)), lbl, h('span', { class: 'sp' }), prev, next, annot);
+    const full = mkBtn('mbtn', 'Schermo intero con note per pagina', 'i-expand', () => openReader(rec, page));
+    const mbar = h('div', { class: 'mediabar' }, ic('i-file'), h('span', { class: 'mname' }, baseName(rec.path)), lbl, h('span', { class: 'sp' }), prev, next, full, annot);
     const canvas = document.createElement('canvas');
     const ov = overlaySvg();
     const msg = h('div', { class: 'pdfmsg' }, 'Caricamento…');
@@ -264,10 +268,12 @@
   }
 
   function hydrate(container, notePath) {
+    if (io && io._rootEl !== Q.scroller) { io.disconnect(); io = null; }
     if (!io && 'IntersectionObserver' in window) {
       io = new IntersectionObserver((entries, o) => entries.forEach((en) => {
         if (en.isIntersecting) { o.unobserve(en.target); if (en.target._load) en.target._load(); }
       }), { root: Q.scroller, rootMargin: '500px' });
+      io._rootEl = Q.scroller;
     }
     const idx = buildIndex();
     container.querySelectorAll('.embed').forEach((span) => {
@@ -339,7 +345,7 @@
     const persistSoon = () => { s.dirty = true; clearTimeout(s.timer); s.timer = setTimeout(() => saveSession(s), 700); };
     s.ed = new INK.Editor({
       svg: cfg.svg, W: 1000, H, fixedH: cfg.kind !== 'draw', overlay: cfg.kind !== 'draw', strokes,
-      scroller: Q.scroller,
+      scroller: cfg.scroller || Q.scroller,
       onChange: () => { persistSoon(); refreshBar(); },
       onSel: (has) => { if (selRow) selRow.hidden = !has; },
     });
@@ -386,16 +392,10 @@
       bar.append(b);
     });
     bar.append(h('span', { class: 'isep' }));
-    INK.COLORS.forEach((c) => {
-      const b = h('button', { type: 'button', class: 'icol', 'aria-label': 'Colore ' + c.label, title: c.label }, h('span', { style: 'background:' + c.swatch }));
-      b.dataset.color = c.id;
-      b.addEventListener('click', () => { INK.state.color = c.id; INK.saveState(); refreshBar(); });
-      bar.append(b);
-    });
+    const colBtn = h('button', { type: 'button', class: 'icolor-btn', 'aria-label': 'Colore e spessore', title: 'Colore e spessore', 'aria-expanded': 'false' }, h('span', { class: 'cdot' }), ic('a-up'));
+    colBtn.addEventListener('click', togglePop);
+    bar.append(colBtn);
     bar.append(h('span', { class: 'isep' }));
-    const sizeBtn = h('button', { type: 'button', class: 'ibtn isize', 'aria-label': 'Spessore del tratto', title: 'Spessore' }, h('span', { class: 'sizebar' }));
-    sizeBtn.addEventListener('click', () => { INK.state.size = (INK.state.size + 1) % 3; INK.saveState(); refreshBar(); });
-    bar.append(sizeBtn);
     const finger = mkBtn('ibtn ifinger', 'Disegna anche con il dito', 'a-hand', () => { INK.state.finger = !INK.state.finger; INK.saveState(); refreshBar(); });
     bar.append(finger);
     bar.append(mkBtn('ibtn iundo', 'Annulla', 'a-undo', () => session && session.ed.undo()));
@@ -411,7 +411,8 @@
       h('button', { type: 'button', class: 'danger', on: { click: () => session && session.ed.deleteSel() } }, ic('a-trash'), 'Elimina'));
     selRow.hidden = true;
 
-    const wrap = h('div', { id: 'inkwrap', class: 'inkwrap' }, selRow, bar);
+    buildPop();
+    const wrap = h('div', { id: 'inkwrap', class: 'inkwrap' }, pop, selRow, bar);
     wrap.hidden = true;
     document.body.append(wrap);
   }
@@ -423,17 +424,12 @@
       b.classList.toggle('on', on);
       b.setAttribute('aria-pressed', String(on));
     });
-    bar.querySelectorAll('[data-color]').forEach((b) => {
-      const on = b.dataset.color === INK.state.color;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-pressed', String(on));
-    });
-    const sb = bar.querySelector('.sizebar');
-    if (sb) sb.style.height = [2, 4, 8][INK.state.size] + 'px';
+    const cd = bar.querySelector('.cdot');
+    if (cd) { cd.style.background = INK.state.color === 'ink' ? '#F6F1E7' : INK.state.color; }
     const f = bar.querySelector('.ifinger');
     f.classList.toggle('on', !!INK.state.finger);
     f.setAttribute('aria-pressed', String(!!INK.state.finger));
-    bar.querySelector('.idel').hidden = !(session && session.cfg.kind === 'draw');
+    bar.querySelector('.idel').hidden = !(session && session.cfg.kind === 'draw' && !session.cfg.sheet);
     if (session) {
       bar.querySelector('.iundo').disabled = !session.ed.hist.length;
       bar.querySelector('.iredo').disabled = !session.ed.redoS.length;
@@ -450,9 +446,408 @@
   }
 
   function hideBar() {
+    closePop();
     const w = document.getElementById('inkwrap');
     if (w) w.hidden = true;
     if (Q) Q.scroller.classList.remove('has-bar');
+  }
+
+
+  /* ---------------------------------------------------------------- popover colori e spessori */
+  let pop = null;
+  let popTab = 'colors';
+  const curWidth = () => (INK.state.tool === 'hl' ? INK.state.hw : INK.state.pw);
+
+  function hsv2hex(hh, ss, vv) {
+    const f = (n) => { const k = (n + hh / 60) % 6; return vv - vv * ss * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return '#' + [f(5), f(3), f(1)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+  function hex2hsv(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let hh = 0;
+    if (d) hh = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return { h: hh * 60, s: mx ? d / mx : 0, v: mx };
+  }
+  const colorHex = (c) => (c === 'ink' ? '#2B2620' : c);
+
+  function buildPop() {
+    pop = h('div', { class: 'inkpop', role: 'dialog', 'aria-label': 'Colore e spessore' });
+    pop.hidden = true;
+  }
+  function closePop() {
+    if (!pop) return;
+    pop.hidden = true;
+    const b = bar && bar.querySelector('.icolor-btn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+  function togglePop() {
+    if (!pop.hidden) { closePop(); return; }
+    pop.hidden = false;
+    bar.querySelector('.icolor-btn').setAttribute('aria-expanded', 'true');
+    renderPop();
+  }
+  function pickColor(c, close) {
+    INK.state.color = c;
+    INK.saveState();
+    refreshBar();
+    if (close) closePop();
+  }
+
+  function renderPop() {
+    pop.replaceChildren();
+    const tabs = h('div', { class: 'ptabs', role: 'tablist' });
+    [['colors', 'Colori'], ['wheel', 'Ruota'], ['width', 'Spessore']].forEach(([id, label]) => {
+      tabs.append(h('button', { type: 'button', role: 'tab', class: id === popTab ? 'on' : '', 'aria-selected': String(id === popTab), on: { click: () => { popTab = id; renderPop(); } } }, label));
+    });
+    pop.append(tabs);
+    if (popTab === 'colors') pop.append(colorsTab());
+    else if (popTab === 'wheel') pop.append(wheelTab());
+    else pop.append(widthTab());
+  }
+
+  function swatch(c, label) {
+    const hex = c === 'ink' ? 'var(--text)' : c;
+    const on = INK.state.color === c;
+    const b = h('button', { type: 'button', class: 'psw' + (on ? ' on' : ''), 'aria-label': 'Colore ' + label, 'aria-pressed': String(on), title: label }, h('span', { style: 'background:' + hex }));
+    b.addEventListener('click', () => pickColor(c, true));
+    return b;
+  }
+
+  function colorsTab() {
+    const box = h('div', { class: 'pcols' });
+    INK.COLORS.forEach((c) => box.append(swatch(c.id, c.label)));
+    INK.state.saved.forEach((c) => box.append(swatch(c, c)));
+    const plus = h('button', { type: 'button', class: 'psw plus', 'aria-label': 'Crea un colore personalizzato', title: 'Colore personalizzato', on: { click: () => { popTab = 'wheel'; renderPop(); } } }, '+');
+    box.append(plus);
+    return box;
+  }
+
+  function wheelTab() {
+    const start = hex2hsv(colorHex(INK.state.color));
+    const st = { h: start.h, s: start.s, v: start.v };
+    const SIZE = 190, RING = 26, SQ = 40;
+    const wheel = h('div', { class: 'wheel', style: 'width:' + SIZE + 'px;height:' + SIZE + 'px' });
+    const inner = h('div', { class: 'wheel-in', style: 'inset:' + RING + 'px' });
+    const sv = h('div', { class: 'wheel-sv', style: 'inset:' + SQ + 'px' });
+    const kRing = h('span', { class: 'wknob' });
+    const kSv = h('span', { class: 'wknob' });
+    wheel.append(inner, sv, kRing, kSv);
+    const preview = h('span', { class: 'wprev' });
+    const hexIn = h('input', { class: 'whex', type: 'text', value: '#000000', maxlength: '7', autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Codice del colore' });
+
+    function paint(commit) {
+      const hex = hsv2hex(st.h, st.s, st.v);
+      sv.style.background = 'linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, ' + hsv2hex(st.h, 1, 1) + ')';
+      const half = SIZE / 2;
+      const rr = half - RING / 2;
+      const a = (st.h - 90) * Math.PI / 180;
+      kRing.style.left = (half + rr * Math.cos(a)) + 'px';
+      kRing.style.top = (half + rr * Math.sin(a)) + 'px';
+      const side = SIZE - SQ * 2;
+      kSv.style.left = (SQ + st.s * side) + 'px';
+      kSv.style.top = (SQ + (1 - st.v) * side) + 'px';
+      kSv.style.background = hex;
+      kRing.style.background = hsv2hex(st.h, 1, 1);
+      preview.style.background = hex;
+      if (document.activeElement !== hexIn) hexIn.value = hex;
+      if (commit) { INK.state.color = hex; INK.saveState(); refreshBar(); }
+    }
+
+    let mode = null;
+    const apply = (e) => {
+      const r = wheel.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      if (mode === 'ring') {
+        st.h = ((Math.atan2(y - SIZE / 2, x - SIZE / 2) * 180 / Math.PI) + 90 + 360) % 360;
+      } else {
+        const side = SIZE - SQ * 2;
+        st.s = Math.max(0, Math.min(1, (x - SQ) / side));
+        st.v = 1 - Math.max(0, Math.min(1, (y - SQ) / side));
+      }
+      paint(true);
+    };
+    wheel.addEventListener('pointerdown', (e) => {
+      const r = wheel.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const inSq = x >= SQ && x <= SIZE - SQ && y >= SQ && y <= SIZE - SQ;
+      mode = inSq ? 'sv' : 'ring';
+      wheel.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      apply(e);
+    });
+    wheel.addEventListener('pointermove', (e) => { if (mode) apply(e); });
+    const end = () => { mode = null; };
+    wheel.addEventListener('pointerup', end);
+    wheel.addEventListener('pointercancel', end);
+    hexIn.addEventListener('input', () => {
+      let v = hexIn.value.trim();
+      if (v && v[0] !== '#') v = '#' + v;
+      if (/^#[0-9a-f]{6}$/i.test(v)) { const c = hex2hsv(v); st.h = c.h; st.s = c.s; st.v = c.v; paint(true); }
+    });
+    hexIn.addEventListener('blur', () => paint(false));
+
+    const savedRow = h('div', { class: 'pcols small' });
+    const fillSaved = () => {
+      savedRow.replaceChildren();
+      INK.state.saved.forEach((c) => {
+        const b = swatch(c, c);
+        b.addEventListener('click', () => { const x = hex2hsv(c); st.h = x.h; st.s = x.s; st.v = x.v; paint(false); }, true);
+        savedRow.append(b);
+      });
+    };
+    fillSaved();
+    const save = h('button', { type: 'button', class: 'psave', on: { click: () => {
+      const hex = hsv2hex(st.h, st.s, st.v);
+      const l = INK.state.saved.filter((c) => c.toUpperCase() !== hex);
+      l.unshift(hex);
+      INK.state.saved = l.slice(0, 12);
+      INK.state.color = hex;
+      INK.saveState();
+      fillSaved();
+      refreshBar();
+    } } }, 'Salva nei miei colori');
+    const side = h('div', { class: 'wside' },
+      h('div', { class: 'plabel' }, 'Colore scelto'),
+      h('div', { class: 'wrow' }, preview, hexIn),
+      save,
+      h('div', { class: 'plabel' }, 'I miei colori'),
+      savedRow);
+    paint(false);
+    return h('div', { class: 'wheelrow' }, wheel, side);
+  }
+
+  function widthTab() {
+    const hl = INK.state.tool === 'hl';
+    const range = hl ? INK.HL_RANGE : INK.PEN_RANGE;
+    const presets = hl ? INK.HL_PRESETS : INK.PEN_PRESETS;
+    const key = hl ? 'hw' : 'pw';
+    const val = h('span', { class: 'wval' }, '');
+    const slider = h('input', { type: 'range', class: 'wslider', min: String(range[0]), max: String(range[1]), step: '0.5', value: String(INK.state[key]), 'aria-label': 'Spessore del tratto' });
+    const prev = document.createElementNS(NS, 'svg');
+    prev.setAttribute('viewBox', '0 0 120 40');
+    prev.setAttribute('class', 'wprevsvg');
+    prev.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M8 28 Q60 -6 112 16');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke-linecap', 'round');
+    prev.append(path);
+    const dots = h('div', { class: 'wdots' });
+    const paint = () => {
+      const w = INK.state[key];
+      val.textContent = String(Math.round(w * 10) / 10);
+      slider.value = String(w);
+      const pct = ((w - range[0]) / (range[1] - range[0])) * 100;
+      slider.style.setProperty('--pct', pct + '%');
+      path.setAttribute('stroke-width', String(Math.min(36, w)));
+      path.setAttribute('stroke', INK.state.color === 'ink' ? 'var(--text)' : INK.state.color);
+      path.setAttribute('opacity', hl ? '0.45' : '1');
+      dots.querySelectorAll('button').forEach((b) => { const on = Number(b.dataset.w) === w; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    };
+    presets.forEach((w) => {
+      const d = Math.max(3, Math.min(22, hl ? w / 3 : w * 1.3));
+      const b = h('button', { type: 'button', 'aria-label': 'Spessore ' + w, title: String(w) }, h('i', { style: 'width:' + d + 'px;height:' + d + 'px' }));
+      b.dataset.w = String(w);
+      b.addEventListener('click', () => { INK.state[key] = w; INK.saveState(); paint(); refreshBar(); });
+      dots.append(b);
+    });
+    slider.addEventListener('input', () => { INK.state[key] = Number(slider.value); INK.saveState(); paint(); refreshBar(); });
+    paint();
+    return h('div', { class: 'widthtab' },
+      h('div', { class: 'plabel' }, hl ? 'Spessore evidenziatore' : 'Spessore penna'),
+      h('div', { class: 'wline' }, slider, val, prev),
+      dots);
+  }
+
+  /* ---------------------------------------------------------------- lettore PDF a schermo intero con note per pagina */
+  let reader = null;
+
+  const noteTextPath = (rec, n) => rec.path + '.p' + n + '.note.txt';
+  const noteDrawPath = (rec, n) => rec.path + '.p' + n + '.notes.ink.svg';
+  const annPath = (rec, n) => rec.path + '.p' + n + '.ink.svg';
+
+  function pageHasNotes(rec, n) {
+    const t = Q.getFile(noteTextPath(rec, n));
+    if (t && t.content && t.content.trim()) return true;
+    if (Q.getFile(annPath(rec, n))) return true;
+    const d = Q.getFile(noteDrawPath(rec, n));
+    if (d) { const p = INK.parseDrawing(d.content); if (p && p.strokes.length) return true; }
+    return false;
+  }
+
+  function closeReader() {
+    if (!reader) return;
+    const r = reader;
+    reader = null;
+    stopInk();
+    r.flush();
+    r.el.remove();
+    document.body.classList.remove('reader-open');
+    document.removeEventListener('keydown', r.onKey);
+    window.removeEventListener('resize', r.onResize);
+    r.thumbIO && r.thumbIO.disconnect();
+    lastPage.set(r.rec.path, r.page);
+    pdfBlocks.forEach((b) => { if (b.isConnected && b.dataset.path === r.rec.path && b._redraw) b._redraw(); });
+  }
+
+  function openReader(rec, startPage) {
+    if (reader) closeReader();
+    stopInk();
+    const R = { rec, page: startPage || 1, doc: null, token: 0, task: null, textTimer: null, textPath: null, textEl: null, ready: false };
+    reader = R;
+
+    const thumbs = h('div', { class: 'rd-thumbs', role: 'list', 'aria-label': 'Pagine' });
+    const closeBtn = mkBtn('mbtn rd-close', 'Chiudi il lettore', 'a-close', closeReader);
+    const count = h('span', { class: 'rd-count' }, '');
+    const annot = h('button', { type: 'button', class: 'mtxt rd-annot' }, ic('a-pen'), 'Annota la pagina');
+    const top = h('div', { class: 'rd-top' }, closeBtn, h('span', { class: 'rd-name' }, baseName(rec.path)), count, h('span', { class: 'sp' }), annot);
+    const canvas = document.createElement('canvas');
+    const ov = overlaySvg();
+    const msg = h('div', { class: 'pdfmsg' }, 'Caricamento…');
+    const pagebox = h('div', { class: 'pagebox on-page' }, canvas, ov, msg);
+    const wrap = h('div', { class: 'rd-pagewrap' }, pagebox);
+    const title = h('h3', { class: 'rd-title' }, '');
+    const prev = mkBtn('mbtn', 'Pagina precedente', 'a-prev');
+    const next = mkBtn('mbtn', 'Pagina successiva', 'a-next');
+    const fold = mkBtn('mbtn', 'Comprimi o espandi il foglio note', 'a-down');
+    const text = h('textarea', { class: 'rd-text', placeholder: 'Scrivi qui gli appunti di questa pagina…', 'aria-label': 'Testo delle note di questa pagina', spellcheck: 'false' });
+    const draw = h('div', { class: 'rd-draw doc' });
+    const body = h('div', { class: 'rd-sheetbody' }, text, draw);
+    const sheet = h('div', { class: 'rd-sheet' },
+      h('div', { class: 'rd-grip' }),
+      h('div', { class: 'rd-sheethead' }, title, h('span', { class: 'sp' }), prev, next, fold),
+      body);
+    const main = h('div', { class: 'rd-main' }, top, wrap, sheet);
+    const el = h('div', { class: 'reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Lettore PDF con note per pagina' }, thumbs, main);
+    R.el = el;
+    document.body.append(el);
+    document.body.classList.add('reader-open');
+
+    const pageCfg = { kind: 'overlay', svg: ov, box: pagebox, annPath: null, H: 0, ready: false, scroller: wrap };
+    fold.addEventListener('click', () => { const c = sheet.classList.toggle('collapsed'); fold.querySelector('use').setAttribute('href', c ? '#a-up' : '#a-down'); });
+
+    R.flush = () => {
+      clearTimeout(R.textTimer);
+      if (R.textEl == null || R.textPath == null) return;
+      const v = text.value;
+      const ex = Q.getFile(R.textPath);
+      if (!v.trim()) { if (ex) Q.removeFile(R.textPath); }
+      else if (!ex || ex.content !== v) Q.writeText(R.textPath, v);
+      refreshDot(R.textPage);
+    };
+    text.addEventListener('input', () => { clearTimeout(R.textTimer); R.textTimer = setTimeout(R.flush, 600); });
+
+    const thumbEls = [];
+    function refreshDot(n) {
+      const t = thumbEls[n - 1];
+      if (t) t.classList.toggle('has', pageHasNotes(rec, n));
+    }
+
+    async function show(n) {
+      const my = ++R.token;
+      R.flush();
+      if (session && (session.cfg === pageCfg || session.cfg.sheet)) stopInk();
+      pageCfg.ready = false;
+      try {
+        R.doc = R.doc || await getPdf(rec);
+        const doc = R.doc;
+        const pageNo = Math.max(1, Math.min(doc.numPages, n));
+        R.page = pageNo;
+        count.textContent = pageNo + ' / ' + doc.numPages;
+        title.textContent = 'Note della pagina ' + pageNo;
+        prev.disabled = pageNo <= 1;
+        next.disabled = pageNo >= doc.numPages;
+        thumbEls.forEach((t, i) => { const on = i + 1 === pageNo; t.classList.toggle('on', on); t.setAttribute('aria-current', on ? 'page' : 'false'); });
+        const cur = thumbEls[pageNo - 1];
+        if (cur) cur.scrollIntoView({ block: 'nearest' });
+        // note di testo e disegno
+        R.textPath = noteTextPath(rec, pageNo);
+        R.textPage = pageNo;
+        R.textEl = text;
+        const tr = Q.getFile(R.textPath);
+        text.value = tr ? tr.content : '';
+        const dp = noteDrawPath(rec, pageNo);
+        const drec = Q.getFile(dp) || { path: dp, content: INK.emptyDrawing(1000, 260) };
+        const blk = drawBlock(drec, 'Disegno delle note della pagina ' + pageNo);
+        blk._cfg.sheet = true;
+        blk._cfg.scroller = body;
+        draw.replaceChildren(blk);
+        // pagina
+        const pg = await doc.getPage(pageNo);
+        if (my !== R.token) return;
+        const vp1 = pg.getViewport({ scale: 1 });
+        pagebox.style.aspectRatio = vp1.width + ' / ' + vp1.height;
+        const cssW = pagebox.clientWidth || 640;
+        const vp = pg.getViewport({ scale: (cssW / vp1.width) * Math.min(window.devicePixelRatio || 1, 2.5) });
+        canvas.width = Math.floor(vp.width);
+        canvas.height = Math.floor(vp.height);
+        if (R.task) { try { R.task.cancel(); } catch (e) { /* ok */ } }
+        R.task = pg.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+        await R.task.promise;
+        if (my !== R.token) return;
+        msg.hidden = true;
+        pageCfg.H = Math.round((1000 * vp1.height) / vp1.width);
+        pageCfg.annPath = annPath(rec, pageNo);
+        pageCfg.ready = true;
+        const ann = Q.getFile(pageCfg.annPath);
+        const parsed = ann ? INK.parseDrawing(ann.content) : null;
+        INK.renderStatic(ov, parsed ? parsed.strokes : [], 1000, pageCfg.H, true);
+        wrap.scrollTop = 0;
+      } catch (e) {
+        if (e && e.name === 'RenderingCancelledException') return;
+        msg.hidden = false;
+        msg.textContent = 'Impossibile mostrare questo PDF';
+      }
+    }
+
+    prev.addEventListener('click', () => show(R.page - 1));
+    next.addEventListener('click', () => show(R.page + 1));
+    annot.addEventListener('click', () => { if (!pageCfg.ready) { Q.toast('Attendi il caricamento della pagina'); return; } startInk(pageCfg); });
+    R.onKey = (e) => {
+      if (!reader) return;
+      const typing = /^(input|textarea)$/i.test((e.target && e.target.tagName) || '');
+      if (e.key === 'Escape' && !session) closeReader();
+      else if (!typing && !session && e.key === 'ArrowLeft') show(R.page - 1);
+      else if (!typing && !session && e.key === 'ArrowRight') show(R.page + 1);
+    };
+    document.addEventListener('keydown', R.onKey);
+    let rt;
+    R.onResize = () => { clearTimeout(rt); rt = setTimeout(() => { if (reader === R && !session) show(R.page); }, 300); };
+    window.addEventListener('resize', R.onResize);
+
+    // miniature
+    getPdf(rec).then((doc) => {
+      if (reader !== R) return;
+      R.doc = doc;
+      let chain = Promise.resolve();
+      R.thumbIO = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        R.thumbIO.unobserve(en.target);
+        const t = en.target;
+        chain = chain.then(async () => {
+          if (reader !== R) return;
+          try {
+            const pg = await doc.getPage(Number(t.dataset.n));
+            const v1 = pg.getViewport({ scale: 1 });
+            const v = pg.getViewport({ scale: (56 / v1.width) * Math.min(window.devicePixelRatio || 1, 2) });
+            const c = t.querySelector('canvas');
+            c.width = Math.floor(v.width);
+            c.height = Math.floor(v.height);
+            await pg.render({ canvasContext: c.getContext('2d'), viewport: v }).promise;
+          } catch (e) { /* miniatura non disponibile */ }
+        });
+      }), { root: thumbs, rootMargin: '200px' }) : null;
+      for (let i = 1; i <= doc.numPages; i++) {
+        const t = h('button', { type: 'button', class: 'rd-th', role: 'listitem', 'aria-label': 'Pagina ' + i, 'data-n': String(i) }, document.createElement('canvas'), h('span', { class: 'rd-thn' }, String(i)), h('b', { class: 'rd-dot' }));
+        t.addEventListener('click', () => show(i));
+        thumbEls.push(t);
+        thumbs.append(t);
+        if (pageHasNotes(rec, i)) t.classList.add('has');
+        if (R.thumbIO) R.thumbIO.observe(t);
+      }
+      show(R.page);
+    }).catch(() => { msg.textContent = 'Impossibile mostrare questo PDF'; });
   }
 
   function deleteDrawing() {
