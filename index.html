@@ -113,7 +113,10 @@
       <button id="addFile" type="button" class="btn-secondary"><svg class="ic"><use href="#a-clip"/></svg>Aggiungi PDF o immagine</button>
     </div>
     <div id="backlinks" class="backlinks" hidden></div>
-    <textarea id="editor" class="editor" spellcheck="false" aria-label="Testo della nota in markdown" hidden></textarea>
+    <div id="edwrap" class="edwrap" hidden>
+      <pre id="hl" class="hl" aria-hidden="true"></pre>
+      <textarea id="editor" class="editor" spellcheck="false" autocapitalize="sentences" aria-label="Testo della nota in markdown"></textarea>
+    </div>
   </section>
 
   <div id="toolbar" class="toolbar" hidden role="toolbar" aria-label="Formattazione">
@@ -187,6 +190,7 @@
 
 <div id="toast" role="status" aria-live="polite" hidden></div>
 
+<script src="hl.js"></script>
 <script src="md.js"></script>
 <script src="ink.js"></script>
 <script src="attach.js"></script>

@@ -267,14 +267,20 @@
     return box;
   }
 
-  function hydrate(container, notePath) {
-    if (io && io._rootEl !== Q.scroller) { io.disconnect(); io = null; }
-    if (!io && 'IntersectionObserver' in window) {
-      io = new IntersectionObserver((entries, o) => entries.forEach((en) => {
-        if (en.isIntersecting) { o.unobserve(en.target); if (en.target._load) en.target._load(); }
-      }), { root: Q.scroller, rootMargin: '500px' });
-      io._rootEl = Q.scroller;
+  const observers = new Map();
+  function observerFor(root) {
+    let o = observers.get(root);
+    if (!o && 'IntersectionObserver' in window) {
+      o = new IntersectionObserver((entries, ob) => entries.forEach((en) => {
+        if (en.isIntersecting) { ob.unobserve(en.target); if (en.target._load) en.target._load(); }
+      }), { root, rootMargin: '500px' });
+      observers.set(root, o);
     }
+    return o;
+  }
+
+  function hydrate(container, notePath, scrollerEl) {
+    io = observerFor(scrollerEl || Q.scroller);
     const idx = buildIndex();
     container.querySelectorAll('.embed').forEach((span) => {
       const src = span.dataset.src || '';
@@ -294,6 +300,7 @@
       } else {
         el = h('span', { class: 'img-note' }, '[file non leggibile: ' + decodePath(src) + ']');
       }
+      if (el._cfg) { el._cfg.notePath = notePath; if (scrollerEl) el._cfg.scroller = scrollerEl; }
       span.replaceWith(el);
     });
   }
@@ -436,12 +443,14 @@
     }
   }
 
+  let barScroller = null;
   function showBar() {
     if (!bar) buildBar();
     document.getElementById('inkwrap').hidden = false;
     bar.hidden = false;
     selRow.hidden = true;
-    Q.scroller.classList.add('has-bar');
+    barScroller = (session && session.cfg.scroller) || Q.scroller;
+    barScroller.classList.add('has-bar');
     refreshBar();
   }
 
@@ -449,7 +458,7 @@
     closePop();
     const w = document.getElementById('inkwrap');
     if (w) w.hidden = true;
-    if (Q) Q.scroller.classList.remove('has-bar');
+    if (barScroller) { barScroller.classList.remove('has-bar'); barScroller = null; }
   }
 
 
@@ -660,18 +669,67 @@
       dots);
   }
 
-  /* ---------------------------------------------------------------- lettore PDF a schermo intero con note per pagina */
-  let reader = null;
+  /* ---------------------------------------------------------------- formattazione markdown (barra della nota) */
+  function fmt(ta, kind) {
+    const st = ta.selectionStart;
+    const en = ta.selectionEnd;
+    const v = ta.value;
+    const sel = v.slice(st, en);
+    const wrap = (a, b, ph) => {
+      const t = sel || ph;
+      ta.setRangeText(a + t + b, st, en, 'end');
+      ta.setSelectionRange(st + a.length, st + a.length + t.length);
+    };
+    const prefix = (p) => {
+      const ls = v.lastIndexOf('\n', st - 1) + 1;
+      const block = v.slice(ls, en).split('\n').map((l) => p + l).join('\n');
+      ta.setRangeText(block, ls, en, 'end');
+    };
+    if (kind === 'bold') wrap('**', '**', 'testo');
+    else if (kind === 'italic') wrap('*', '*', 'testo');
+    else if (kind === 'code') wrap('`', '`', 'codice');
+    else if (kind === 'wiki') wrap('[[', ']]', 'nota');
+    else if (kind === 'h2') prefix('## ');
+    else if (kind === 'list') prefix('- ');
+    else if (kind === 'task') prefix('- [ ] ');
+    ta.dispatchEvent(new Event('input'));
+    ta.focus();
+  }
 
-  const noteTextPath = (rec, n) => rec.path + '.p' + n + '.note.txt';
-  const noteDrawPath = (rec, n) => rec.path + '.p' + n + '.notes.ink.svg';
+  /* ---------------------------------------------------------------- lettore PDF a schermo intero con nota per pagina */
+  let reader = null;
+  let activePageNote = null;
+  const MODE_KEY = 'quaderno.rdmode';
+  const SHEET_KEY = 'quaderno.sheet';
+  const narrowMq = window.matchMedia('(max-width: 699px)');
+
+  const pageNotePath = (rec, n) => rec.path + '.p' + n + '.md';
+  const legacyTextPath = (rec, n) => rec.path + '.p' + n + '.note.txt';
+  const legacyDrawPath = (rec, n) => rec.path + '.p' + n + '.notes.ink.svg';
   const annPath = (rec, n) => rec.path + '.p' + n + '.ink.svg';
 
+  // le note scritte con la versione precedente (testo + un disegno) diventano una nota normale
+  function migrateLegacy(rec, n) {
+    const target = pageNotePath(rec, n);
+    if (Q.getFile(target)) return;
+    const t = Q.getFile(legacyTextPath(rec, n));
+    const d = Q.getFile(legacyDrawPath(rec, n));
+    let hasDraw = false;
+    if (d) { const p = INK.parseDrawing(d.content); hasDraw = !!(p && p.strokes.length); }
+    const text = t && t.content ? t.content.trim() : '';
+    if (!text && !hasDraw) return;
+    const md = [text, hasDraw ? '![Disegno](' + encodeSeg(baseName(d.path)) + ')' : ''].filter(Boolean).join('\n\n') + '\n';
+    Q.writeMd(target, md);
+    if (t) Q.removeFile(t.path);
+  }
+
   function pageHasNotes(rec, n) {
-    const t = Q.getFile(noteTextPath(rec, n));
-    if (t && t.content && t.content.trim()) return true;
+    const m = Q.getFile(pageNotePath(rec, n));
+    if (m && m.content && m.content.trim()) return true;
     if (Q.getFile(annPath(rec, n))) return true;
-    const d = Q.getFile(noteDrawPath(rec, n));
+    const t = Q.getFile(legacyTextPath(rec, n));
+    if (t && t.content && t.content.trim()) return true;
+    const d = Q.getFile(legacyDrawPath(rec, n));
     if (d) { const p = INK.parseDrawing(d.content); if (p && p.strokes.length) return true; }
     return false;
   }
@@ -683,6 +741,7 @@
     stopInk();
     r.flush();
     r.el.remove();
+    activePageNote = null;
     document.body.classList.remove('reader-open');
     document.removeEventListener('keydown', r.onKey);
     window.removeEventListener('resize', r.onResize);
@@ -691,10 +750,163 @@
     pdfBlocks.forEach((b) => { if (b.isConnected && b.dataset.path === r.rec.path && b._redraw) b._redraw(); });
   }
 
+  /* editor di una nota (anteprima, markdown, affiancati) dentro il foglio */
+  function createPageNote(onSaved) {
+    const E = { path: null, mode: 'preview', page: 1 };
+    const pv = h('div', { class: 'rd-pv doc' });
+    const hl = h('pre', { class: 'hl', 'aria-hidden': 'true' });
+    const ta = h('textarea', { class: 'editor', spellcheck: 'false', 'aria-label': 'Testo Markdown della nota di questa pagina' });
+    const wrap = h('div', { class: 'edwrap rd-edwrap' }, hl, ta);
+    const sp = h('div', { class: 'splitter', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Trascina per ridimensionare', tabindex: '0' }, h('i', {}, h('b'), h('b'), h('b')));
+    const area = h('div', { class: 'rd-ednote', 'data-mode': 'preview' }, wrap, sp, pv);
+    const tb = h('div', { class: 'toolbar rd-tb', role: 'toolbar', 'aria-label': 'Formattazione' });
+    const mainTb = document.getElementById('toolbar');
+    if (mainTb) tb.innerHTML = mainTb.innerHTML;
+    tb.addEventListener('mousedown', (e) => e.preventDefault());
+
+    const modeBtns = {};
+    const seg = h('div', { class: 'seg rd-seg', role: 'group', 'aria-label': 'Modalità della nota' });
+    [['preview', 'Anteprima'], ['edit', 'Markdown'], ['split', 'Affiancati']].forEach(([m, label]) => {
+      const b = h('button', { type: 'button', class: m === 'split' ? 'only-split' : '' }, label);
+      b.addEventListener('click', () => E.setMode(m));
+      modeBtns[m] = b;
+      seg.append(b);
+    });
+
+    const paintHl = () => { hl.innerHTML = HL.html(ta.value); hl.scrollTop = ta.scrollTop; };
+    const eff = () => (E.mode === 'split' && narrowMq.matches ? 'edit' : E.mode);
+
+    function renderPv() {
+      if (!ta.value.trim()) { pv.innerHTML = '<p class="img-note">Nota vuota. Passa a "Markdown" per scrivere.</p>'; return; }
+      const top = pv.scrollTop;
+      pv.innerHTML = MD.render(ta.value);
+      pv.querySelectorAll('a.wiki').forEach((a) => a.setAttribute('href', '#'));
+      hydrate(pv, E.path, pv);
+      pv.scrollTop = top;
+    }
+    function applyMode() {
+      const m = eff();
+      area.dataset.mode = m;
+      Object.entries(modeBtns).forEach(([k, b]) => { b.classList.toggle('on', k === m); b.setAttribute('aria-pressed', String(k === m)); });
+      if (m !== 'edit') renderPv();
+    }
+    E.setMode = (m) => {
+      stopInk();
+      E.mode = m;
+      try { localStorage.setItem(MODE_KEY, m); } catch (e) { /* ok */ }
+      applyMode();
+      if (m !== 'preview') ta.focus();
+    };
+
+    let saveTimer = null;
+    E.flush = () => {
+      clearTimeout(saveTimer);
+      if (E.path == null) return;
+      const v = ta.value;
+      const ex = Q.getFile(E.path);
+      if (!v.trim()) { if (ex) Q.removeFile(E.path); }
+      else if (!ex || ex.content !== v) Q.writeMd(E.path, v);
+      onSaved(E.page);
+    };
+    const livePv = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => { if (!session && eff() === 'split') renderPv(); }, 250); }; })();
+    ta.addEventListener('input', () => {
+      paintHl();
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(E.flush, 500);
+      if (eff() === 'split') livePv();
+    });
+    let lock = 0;
+    const follow = (from, to) => {
+      if (eff() !== 'split' || Date.now() < lock) return;
+      const max = from.scrollHeight - from.clientHeight;
+      lock = Date.now() + 80;
+      to.scrollTop = (max > 0 ? from.scrollTop / max : 0) * (to.scrollHeight - to.clientHeight);
+    };
+    ta.addEventListener('scroll', () => { hl.scrollTop = ta.scrollTop; follow(ta, pv); });
+    pv.addEventListener('scroll', () => { if (!session) follow(pv, ta); });
+    pv.addEventListener('click', (e) => {
+      const a = e.target.closest('a.wiki');
+      if (a) { e.preventDefault(); E.flush(); Q.openWiki(a.dataset.wiki); }
+    });
+
+    // divisore trascinabile
+    const setSplit = (pct) => {
+      pct = Math.max(25, Math.min(75, pct));
+      area.style.setProperty('--rdsplit', pct + '%');
+      try { localStorage.setItem('quaderno.rdsplit', String(Math.round(pct))); } catch (e) { /* ok */ }
+    };
+    try { const sv = Number(localStorage.getItem('quaderno.rdsplit')); if (sv) setSplit(sv); } catch (e) { /* ok */ }
+    let drag = false;
+    sp.addEventListener('pointerdown', (e) => { drag = true; sp.setPointerCapture(e.pointerId); e.preventDefault(); });
+    sp.addEventListener('pointerup', () => { drag = false; });
+    sp.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const r = area.getBoundingClientRect();
+      setSplit(((e.clientX - r.left) / r.width) * 100);
+    });
+
+    // inserimenti (disegni, immagini, PDF) nella nota della pagina
+    const ctx = {
+      get path() { return E.path; },
+      insert(md) {
+        const m = eff();
+        const v = ta.value;
+        if (m === 'preview') {
+          ta.value = v.replace(/\s*$/, '') + (v.trim() ? '\n\n' : '') + md + '\n';
+        } else {
+          const st = ta.selectionStart;
+          const before = v.slice(0, st);
+          const after = v.slice(ta.selectionEnd);
+          const pre = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+          ta.value = before + pre + md + '\n\n' + after;
+        }
+        paintHl();
+        E.flush();
+        if (E.mode === 'edit') E.mode = 'preview';
+        applyMode();
+      },
+    };
+    tb.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-fmt]');
+      if (!b) return;
+      const k = b.dataset.fmt;
+      if (k === 'draw') addDrawing(ctx);
+      else if (k === 'attach') pickAttachment(ctx);
+      else { if (eff() === 'preview') E.setMode('edit'); fmt(ta, k); }
+    });
+
+    E.load = (path, page) => {
+      E.flush();
+      stopInk();
+      E.path = path;
+      E.page = page;
+      const rec = Q.getFile(path);
+      ta.value = rec ? rec.content : '';
+      ta.scrollTop = 0;
+      paintHl();
+      let saved = 'preview';
+      try { saved = localStorage.getItem(MODE_KEY) || 'preview'; } catch (e) { /* ok */ }
+      E.mode = ta.value.trim() ? saved : 'edit';
+      applyMode();
+    };
+    E.reload = () => {
+      const rec = Q.getFile(E.path);
+      ta.value = rec ? rec.content : '';
+      paintHl();
+      applyMode();
+    };
+    E.seg = seg;
+    E.area = area;
+    E.toolbar = tb;
+    E.reapply = applyMode;
+    narrowMq.addEventListener('change', applyMode);
+    return E;
+  }
+
   function openReader(rec, startPage) {
     if (reader) closeReader();
     stopInk();
-    const R = { rec, page: startPage || 1, doc: null, token: 0, task: null, textTimer: null, textPath: null, textEl: null, ready: false };
+    const R = { rec, page: startPage || 1, doc: null, token: 0, task: null };
     reader = R;
 
     const thumbs = h('div', { class: 'rd-thumbs', role: 'list', 'aria-label': 'Pagine' });
@@ -711,43 +923,50 @@
     const prev = mkBtn('mbtn', 'Pagina precedente', 'a-prev');
     const next = mkBtn('mbtn', 'Pagina successiva', 'a-next');
     const fold = mkBtn('mbtn', 'Comprimi o espandi il foglio note', 'a-down');
-    const text = h('textarea', { class: 'rd-text', placeholder: 'Scrivi qui gli appunti di questa pagina…', 'aria-label': 'Testo delle note di questa pagina', spellcheck: 'false' });
-    const draw = h('div', { class: 'rd-draw doc' });
-    const body = h('div', { class: 'rd-sheetbody' }, text, draw);
-    const sheet = h('div', { class: 'rd-sheet' },
-      h('div', { class: 'rd-grip' }),
-      h('div', { class: 'rd-sheethead' }, title, h('span', { class: 'sp' }), prev, next, fold),
-      body);
+
+    const thumbEls = [];
+    const refreshDot = (n) => { const t = thumbEls[n - 1]; if (t) t.classList.toggle('has', pageHasNotes(rec, n)); };
+    const E = createPageNote(refreshDot);
+    activePageNote = E;
+    R.flush = () => E.flush();
+
+    const grip = h('div', { class: 'rd-grip', role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': 'Trascina per ridimensionare il foglio', tabindex: '0' }, h('span'));
+    const sheet = h('div', { class: 'rd-sheet' }, grip,
+      h('div', { class: 'rd-sheethead' }, title, h('span', { class: 'sp' }), E.seg, prev, next, fold),
+      E.area, E.toolbar);
     const main = h('div', { class: 'rd-main' }, top, wrap, sheet);
-    const el = h('div', { class: 'reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Lettore PDF con note per pagina' }, thumbs, main);
+    const el = h('div', { class: 'reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Lettore PDF con nota per pagina' }, thumbs, main);
     R.el = el;
     document.body.append(el);
     document.body.classList.add('reader-open');
 
-    const pageCfg = { kind: 'overlay', svg: ov, box: pagebox, annPath: null, H: 0, ready: false, scroller: wrap };
+    // altezza del foglio, trascinabile
+    const setSheet = (px) => {
+      const max = Math.max(200, main.clientHeight - 110);
+      px = Math.max(150, Math.min(max, px));
+      el.style.setProperty('--sheet-h', px + 'px');
+      try { localStorage.setItem(SHEET_KEY, String(Math.round(px))); } catch (e) { /* ok */ }
+    };
+    let sh = 0;
+    try { sh = Number(localStorage.getItem(SHEET_KEY)) || 0; } catch (e) { /* ok */ }
+    setSheet(sh || Math.round(main.clientHeight * 0.5));
+    let gd = false;
+    grip.addEventListener('pointerdown', (e) => { gd = true; grip.setPointerCapture(e.pointerId); e.preventDefault(); });
+    grip.addEventListener('pointerup', () => { gd = false; });
+    grip.addEventListener('pointermove', (e) => { if (gd) setSheet(main.getBoundingClientRect().bottom - e.clientY); });
+    grip.addEventListener('keydown', (e) => {
+      const cur = parseInt(el.style.getPropertyValue('--sheet-h'), 10) || 300;
+      if (e.key === 'ArrowUp') setSheet(cur + 40);
+      if (e.key === 'ArrowDown') setSheet(cur - 40);
+    });
     fold.addEventListener('click', () => { const c = sheet.classList.toggle('collapsed'); fold.querySelector('use').setAttribute('href', c ? '#a-up' : '#a-down'); });
 
-    R.flush = () => {
-      clearTimeout(R.textTimer);
-      if (R.textEl == null || R.textPath == null) return;
-      const v = text.value;
-      const ex = Q.getFile(R.textPath);
-      if (!v.trim()) { if (ex) Q.removeFile(R.textPath); }
-      else if (!ex || ex.content !== v) Q.writeText(R.textPath, v);
-      refreshDot(R.textPage);
-    };
-    text.addEventListener('input', () => { clearTimeout(R.textTimer); R.textTimer = setTimeout(R.flush, 600); });
-
-    const thumbEls = [];
-    function refreshDot(n) {
-      const t = thumbEls[n - 1];
-      if (t) t.classList.toggle('has', pageHasNotes(rec, n));
-    }
+    const pageCfg = { kind: 'overlay', svg: ov, box: pagebox, annPath: null, H: 0, ready: false, scroller: wrap };
 
     async function show(n) {
       const my = ++R.token;
-      R.flush();
-      if (session && (session.cfg === pageCfg || session.cfg.sheet)) stopInk();
+      E.flush();
+      if (session && session.cfg === pageCfg) stopInk();
       pageCfg.ready = false;
       try {
         R.doc = R.doc || await getPdf(rec);
@@ -755,25 +974,15 @@
         const pageNo = Math.max(1, Math.min(doc.numPages, n));
         R.page = pageNo;
         count.textContent = pageNo + ' / ' + doc.numPages;
-        title.textContent = 'Note della pagina ' + pageNo;
+        title.textContent = 'Nota della pagina ' + pageNo;
         prev.disabled = pageNo <= 1;
         next.disabled = pageNo >= doc.numPages;
         thumbEls.forEach((t, i) => { const on = i + 1 === pageNo; t.classList.toggle('on', on); t.setAttribute('aria-current', on ? 'page' : 'false'); });
         const cur = thumbEls[pageNo - 1];
         if (cur) cur.scrollIntoView({ block: 'nearest' });
-        // note di testo e disegno
-        R.textPath = noteTextPath(rec, pageNo);
-        R.textPage = pageNo;
-        R.textEl = text;
-        const tr = Q.getFile(R.textPath);
-        text.value = tr ? tr.content : '';
-        const dp = noteDrawPath(rec, pageNo);
-        const drec = Q.getFile(dp) || { path: dp, content: INK.emptyDrawing(1000, 260) };
-        const blk = drawBlock(drec, 'Disegno delle note della pagina ' + pageNo);
-        blk._cfg.sheet = true;
-        blk._cfg.scroller = body;
-        draw.replaceChildren(blk);
-        // pagina
+        migrateLegacy(rec, pageNo);
+        E.load(pageNotePath(rec, pageNo), pageNo);
+        refreshDot(pageNo);
         const pg = await doc.getPage(pageNo);
         if (my !== R.token) return;
         const vp1 = pg.getViewport({ scale: 1 });
@@ -856,8 +1065,9 @@
     const cfg = session.cfg;
     stopInk(true);
     Q.removeFile(cfg.path);
-    Q.removeLinesContaining(encodeSeg(baseName(cfg.path)));
+    Q.removeLinesContaining(encodeSeg(baseName(cfg.path)), cfg.notePath || null);
     cfg.box.remove();
+    if (activePageNote && cfg.notePath === activePageNote.path) activePageNote.reload();
   }
 
   document.addEventListener('keydown', (e) => {
@@ -875,13 +1085,16 @@
     if (box && box._cfg) startInk(box._cfg);
   }
 
-  function addDrawing() {
-    const n = Q.note();
+  const mainCtx = () => { const n = Q.note(); return n ? { path: n.path, insert: (md) => Q.insertBlock(md) } : null; };
+
+  function addDrawing(ctx) {
+    ctx = ctx || mainCtx();
+    const n = ctx && { path: ctx.path };
     if (!n) return;
     const name = 'disegno-' + Math.random().toString(36).slice(2, 7) + '.svg';
     const path = assetsDir(n.path) + name;
     Q.writeText(path, INK.emptyDrawing(1000, 420));
-    Q.insertBlock('![Disegno](' + refDir(n.path) + name + ')');
+    ctx.insert('![Disegno](' + refDir(n.path) + name + ')');
     startByPath(path);
   }
 
@@ -901,8 +1114,9 @@
     } catch (e) { return null; }
   }
 
-  async function addFiles(files) {
-    const n = Q.note();
+  async function addFiles(files, ctx) {
+    ctx = ctx || mainCtx();
+    const n = ctx && { path: ctx.path };
     if (!n) return;
     const mds = [];
     let lastPath = null;
@@ -920,18 +1134,20 @@
       mds.push('![' + name.replace(/[\[\]]/g, '') + '](' + refDir(n.path) + encodeSeg(name) + ')');
       lastPath = dir + name;
     }
-    if (mds.length) Q.insertBlock(mds.join('\n\n'));
+    if (mds.length) ctx.insert(mds.join('\n\n'));
     return lastPath;
   }
 
-  function pickAttachment() {
+  let fileCtx = null;
+  function pickAttachment(ctx) {
+    fileCtx = ctx || null;
     if (!fileInput) {
       fileInput = h('input', { type: 'file', accept: 'image/*,.pdf,application/pdf', multiple: '' });
       fileInput.hidden = true;
       fileInput.addEventListener('change', async () => {
         const list = [...fileInput.files];
         fileInput.value = '';
-        if (list.length) await addFiles(list);
+        if (list.length) await addFiles(list, fileCtx);
       });
       document.body.append(fileInput);
     }
@@ -943,5 +1159,5 @@
     document.body.insertAdjacentHTML('afterbegin', SPRITE);
   }
 
-  root.ATT = { init, hydrate, stopInk, inking: () => !!session, addDrawing, pickAttachment, assetsDir, refDir, encodeSeg, MIME, MAX };
+  root.ATT = { init, hydrate, stopInk, inking: () => !!session, addDrawing, pickAttachment, fmt, closeReader, assetsDir, refDir, encodeSeg, MIME, MAX };
 })(window);

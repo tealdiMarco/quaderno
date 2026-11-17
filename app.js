@@ -101,7 +101,8 @@
   try { open = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')); } catch (e) { open = new Set(); }
   const tagCache = new WeakMap();
 
-  const live = () => [...notes.values()].filter((n) => !n.deleted && isMd(n)).sort((a, b) => a.path.localeCompare(b.path, 'it', { numeric: true }));
+  const isPageNote = (p) => /\.pdf\.p\d+(?: \([^)]*\))?\.md$/i.test(p);
+  const live = () => [...notes.values()].filter((n) => !n.deleted && isMd(n) && !isPageNote(n.path)).sort((a, b) => a.path.localeCompare(b.path, 'it', { numeric: true }));
   const hasCfg = () => !!(settings.owner && settings.repo && settings.token);
 
   function persist(n) {
@@ -228,9 +229,25 @@
       updateStatus();
       scheduleSync();
     },
+    writeMd(path, content) {
+      let n = notes.get(path);
+      if (n) { n.deleted = false; n.kind = 'md'; n.content = content; delete n.data; }
+      else n = { path, kind: 'md', content, sha: null, deleted: false };
+      n.dirty = true;
+      notes.set(path, n);
+      persist(n);
+      updateStatus();
+      scheduleSync();
+    },
+    openWiki(target) {
+      const p = resolveWiki(target, wikiIndex());
+      if (!p) { toast('Nota non trovata: ' + target); return; }
+      ATT.closeReader();
+      openNote(p);
+    },
     removeFile(path) { removeNote(path); updateStatus(); scheduleSync(); },
-    removeLinesContaining(sub) {
-      const n = Q.note();
+    removeLinesContaining(sub, path) {
+      const n = path ? notes.get(path) : Q.note();
       if (!n) return;
       const lines = n.content.split('\n').filter((l) => !(l.includes('![') && l.includes(sub)));
       n.content = lines.join('\n');
@@ -262,7 +279,7 @@
     },
   };
   ATT.init(Q);
-  $('#appVer').textContent = 'v4 (tema, vista affiancata, note per pagina)';
+  $('#appVer').textContent = 'v6 (nota completa per pagina PDF)';
 
   /* ------------------------------------------------------------------ barra laterale */
   function buildTree(list) {
@@ -418,9 +435,9 @@
     });
     const ed = $('#editor');
     const pv = $('#preview');
-    ed.hidden = em === 'preview';
+    $('#edwrap').hidden = em === 'preview';
     pv.hidden = em === 'edit';
-    if (em !== 'preview') if (ed.value !== n.content) ed.value = n.content;
+    if (em !== 'preview') { if (ed.value !== n.content) ed.value = n.content; paintHl(); }
     if (em === 'edit') {
       $('#backlinks').hidden = true;
     } else {
@@ -451,9 +468,12 @@
 
   /* modifiche dall'editor */
   const afterEdit = debounce(() => { renderSidebar(); updateStatus(); scheduleSync(); }, 500);
+  const paintHl = () => { $('#hl').innerHTML = HL.html($('#editor').value); $('#hl').scrollTop = $('#editor').scrollTop; };
+  $('#editor').addEventListener('scroll', () => { $('#hl').scrollTop = $('#editor').scrollTop; });
   $('#editor').addEventListener('input', () => {
     const n = current && notes.get(current);
     if (!n) return;
+    paintHl();
     n.content = $('#editor').value;
     n.dirty = true;
     persist(n);
@@ -492,7 +512,7 @@
     let sp = $('#splitter');
     if (!sp) {
       sp = h('div', { id: 'splitter', class: 'splitter', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Trascina per ridimensionare', tabindex: '0' }, h('i', {}, h('b'), h('b'), h('b')));
-      $('#editor').after(sp);
+      $('#edwrap').after(sp);
       let drag = false;
       sp.addEventListener('pointerdown', (e) => { drag = true; sp.setPointerCapture(e.pointerId); e.preventDefault(); });
       sp.addEventListener('pointerup', () => { drag = false; });
@@ -556,30 +576,7 @@
   function applyFmt(kind) {
     if (kind === 'draw') { ATT.addDrawing(); return; }
     if (kind === 'attach') { ATT.pickAttachment(); return; }
-    const ta = $('#editor');
-    const s = ta.selectionStart;
-    const e = ta.selectionEnd;
-    const v = ta.value;
-    const sel = v.slice(s, e);
-    const wrap = (a, b, ph) => {
-      const t = sel || ph;
-      ta.setRangeText(a + t + b, s, e, 'end');
-      ta.setSelectionRange(s + a.length, s + a.length + t.length);
-    };
-    const prefix = (p) => {
-      const ls = v.lastIndexOf('\n', s - 1) + 1;
-      const block = v.slice(ls, e).split('\n').map((l) => p + l).join('\n');
-      ta.setRangeText(block, ls, e, 'end');
-    };
-    if (kind === 'bold') wrap('**', '**', 'testo');
-    else if (kind === 'italic') wrap('*', '*', 'testo');
-    else if (kind === 'code') wrap('`', '`', 'codice');
-    else if (kind === 'wiki') wrap('[[', ']]', 'nota');
-    else if (kind === 'h2') prefix('## ');
-    else if (kind === 'list') prefix('- ');
-    else if (kind === 'task') prefix('- [ ] ');
-    ta.dispatchEvent(new Event('input'));
-    ta.focus();
+    ATT.fmt($('#editor'), kind);
   }
   $('#toolbar').addEventListener('mousedown', (e) => e.preventDefault());
   $('#toolbar').addEventListener('click', (e) => {
@@ -805,9 +802,9 @@
     if (effMode() !== 'edit') {
       if (ATT.inking()) return;
       const dir = ATT.assetsDir(current);
-      if (effMode() === 'split' && !n.dirty && $('#editor').value !== n.content) $('#editor').value = n.content;
+      if (effMode() === 'split' && !n.dirty && $('#editor').value !== n.content) { $('#editor').value = n.content; paintHl(); }
       if ([...changed].some((p) => p === current || p.startsWith(dir) || !/\.md$/i.test(p))) renderMain();
-    } else if (!n.dirty && $('#editor').value !== n.content) $('#editor').value = n.content;
+    } else if (!n.dirty && $('#editor').value !== n.content) { $('#editor').value = n.content; paintHl(); }
   }
 
   /* ------------------------------------------------------------------ impostazioni */
@@ -978,6 +975,22 @@
     if (edge && t && t.clientX - edge.x > 60 && Math.abs(t.clientY - edge.y) < 60) openDrawer();
     edge = null;
   }, { passive: true });
+
+  // con la tastiera aperta l'app segue l'area visibile: niente salti di pagina e il cursore resta in vista
+  if (window.visualViewport) {
+    const vv = window.visualViewport;
+    const fit = () => {
+      const r = document.documentElement.style;
+      if (vv.scale > 1.02) return;
+      const kb = window.innerHeight - vv.height > 80;
+      r.setProperty('--vvh', kb ? vv.height + 'px' : '100%');
+      r.setProperty('--vvt', kb ? vv.offsetTop + 'px' : '0px');
+      document.body.classList.toggle('kb-open', kb);
+    };
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+    fit();
+  }
 
   const THEME_KEY = 'quaderno.theme';
   let theme = 'auto';

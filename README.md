@@ -81,3 +81,14 @@ PDF.js (cartella `vendor`) è distribuito con licenza Apache 2.0, vedi `vendor/p
 - **Affiancati**: Markdown a sinistra e anteprima a destra con aggiornamento in tempo reale, scorrimento sincronizzato e divisore trascinabile (da 700 px di larghezza in su).
 - **Colori e spessori**: il bottone con il pallino colorato nella barra del disegno apre un popover con 12 colori, la ruota dei colori (con codice esadecimale e "I miei colori") e lo spessore a cursore (penna 1–20, evidenziatore 6–64).
 - **PDF a schermo intero con note per pagina**: nel blocco PDF il pulsante con le quattro frecce apre il lettore con miniature, pagina grande e foglio "Note della pagina N" (testo + disegno). Salvati come `file.pdf.pN.note.txt` e `file.pdf.pN.notes.ink.svg`; un puntino sulle miniature segna le pagine con note.
+
+## Novità 4.1
+
+- Scrivendo in Markdown il testo ora è colorato (titoli, grassetto, corsivo, codice, link, [[wiki]], #tag, liste, citazioni).
+- Con la tastiera aperta (iPad/telefono) la pagina non "salta" più e il cursore resta sempre visibile.
+
+## Novità 4.2
+
+- Ogni pagina del PDF ha una **nota completa** (come le note normali): Anteprima / Markdown / Affiancati, colori della sintassi, disegni in mezzo al testo, immagini e PDF allegati. Si apre dal lettore a schermo intero; il foglio si allarga trascinando la maniglia.
+- Le note di pagina sono salvate come `file.pdf.pN.md` (con i loro disegni in `file.pdf.pN.assets/`) dentro la cartella `.assets` della nota, e non compaiono nell'elenco delle note.
+- Le note per pagina scritte con la versione 4.0 (testo + disegno) vengono convertite automaticamente alla prima apertura.
