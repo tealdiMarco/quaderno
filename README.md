@@ -92,3 +92,14 @@ PDF.js (cartella `vendor`) è distribuito con licenza Apache 2.0, vedi `vendor/p
 - Ogni pagina del PDF ha una **nota completa** (come le note normali): Anteprima / Markdown / Affiancati, colori della sintassi, disegni in mezzo al testo, immagini e PDF allegati. Si apre dal lettore a schermo intero; il foglio si allarga trascinando la maniglia.
 - Le note di pagina sono salvate come `file.pdf.pN.md` (con i loro disegni in `file.pdf.pN.assets/`) dentro la cartella `.assets` della nota, e non compaiono nell'elenco delle note.
 - Le note per pagina scritte con la versione 4.0 (testo + disegno) vengono convertite automaticamente alla prima apertura.
+
+## 4.3
+- Vista affiancata: l'anteprima ora segue la riga che stai scrivendo (niente più "twitch").
+
+## 4.4 (v10)
+- LaTeX: `$formula$` nel testo e `$$formula$$` a blocco (KaTeX in `vendor/katex`, caricato solo quando serve, funziona offline).
+- Tag, ricerca e filtro includono anche le note delle pagine PDF; un clic apre il lettore alla pagina giusta. I tag nell'anteprima della nota di pagina sono cliccabili.
+- Lettore PDF: tasto nuvola per sincronizzare subito; sincronizza all'apertura e alla chiusura. Il foglio note non copre più la pagina, che resta scorribile (anche con la tastiera aperta su iPad).
+
+## 4.5 (v11)
+- Aspetto del testo (menu del tema, "Aspetto del testo…"): temi pronti (Quaderno, Rivista, Appunti), font e colore per titoli, testo, sorgente e codice; in "Avanzate" font e colore separati per #, ##, ###, grassetto, corsivo e tag. Le scelte restano sul dispositivo.

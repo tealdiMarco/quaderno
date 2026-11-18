@@ -280,6 +280,7 @@
   }
 
   function hydrate(container, notePath, scrollerEl) {
+    try { MD.typeset(container); } catch (e) { /* ok */ }
     io = observerFor(scrollerEl || Q.scroller);
     const idx = buildIndex();
     container.querySelectorAll('.embed').forEach((span) => {
@@ -741,6 +742,7 @@
     stopInk();
     r.flush();
     r.el.remove();
+    try { Q.refreshSidebar(); Q.syncNow && Q.syncNow(false); } catch (e) { /* ok */ }
     activePageNote = null;
     document.body.classList.remove('reader-open');
     document.removeEventListener('keydown', r.onKey);
@@ -756,6 +758,7 @@
     const pv = h('div', { class: 'rd-pv doc' });
     const hl = h('pre', { class: 'hl', 'aria-hidden': 'true' });
     const ta = h('textarea', { class: 'editor', spellcheck: 'false', 'aria-label': 'Testo Markdown della nota di questa pagina' });
+    HL.attach(ta);
     const wrap = h('div', { class: 'edwrap rd-edwrap' }, hl, ta);
     const sp = h('div', { class: 'splitter', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Trascina per ridimensionare', tabindex: '0' }, h('i', {}, h('b'), h('b'), h('b')));
     const area = h('div', { class: 'rd-ednote', 'data-mode': 'preview' }, wrap, sp, pv);
@@ -808,25 +811,44 @@
       else if (!ex || ex.content !== v) Q.writeMd(E.path, v);
       onSaved(E.page);
     };
-    const livePv = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => { if (!session && eff() === 'split') renderPv(); }, 250); }; })();
+    let typingUntil = 0;
+    const markTyping = () => { typingUntil = Date.now() + 900; };
+    const livePv = (() => {
+      let t;
+      return () => {
+        clearTimeout(t);
+        t = setTimeout(() => {
+          if (session || eff() !== 'split') return;
+          const top = pv.scrollTop;
+          renderPv();
+          pv.scrollTop = top;
+          HL.followPreview(ta, pv, false);
+        }, 200);
+      };
+    })();
+    const caretMoved = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => { if (eff() === 'split' && document.activeElement === ta && !session) HL.followPreview(ta, pv, false); }, 120); }; })();
     ta.addEventListener('input', () => {
       paintHl();
       clearTimeout(saveTimer);
       saveTimer = setTimeout(E.flush, 500);
-      if (eff() === 'split') livePv();
+      if (eff() === 'split') { markTyping(); livePv(); }
     });
     let lock = 0;
     const follow = (from, to) => {
-      if (eff() !== 'split' || Date.now() < lock) return;
+      if (eff() !== 'split' || Date.now() < lock || Date.now() < typingUntil) return;
       const max = from.scrollHeight - from.clientHeight;
-      lock = Date.now() + 80;
+      lock = Date.now() + 120;
       to.scrollTop = (max > 0 ? from.scrollTop / max : 0) * (to.scrollHeight - to.clientHeight);
     };
     ta.addEventListener('scroll', () => { hl.scrollTop = ta.scrollTop; follow(ta, pv); });
     pv.addEventListener('scroll', () => { if (!session) follow(pv, ta); });
+    ['keyup', 'click', 'touchend'].forEach((ev) => ta.addEventListener(ev, () => { markTyping(); caretMoved(); }));
+    document.addEventListener('selectionchange', () => { if (document.activeElement === ta) { markTyping(); caretMoved(); } });
     pv.addEventListener('click', (e) => {
       const a = e.target.closest('a.wiki');
-      if (a) { e.preventDefault(); E.flush(); Q.openWiki(a.dataset.wiki); }
+      if (a) { e.preventDefault(); E.flush(); Q.openWiki(a.dataset.wiki); return; }
+      const tg = e.target.closest('a.tag');
+      if (tg) { e.preventDefault(); E.flush(); closeReader(); Q.showTag(tg.dataset.tag); }
     });
 
     // divisore trascinabile
@@ -903,17 +925,31 @@
     return E;
   }
 
+  function openReaderFor(pdfPath, page) {
+    const rec = Q.getFile(pdfPath);
+    if (rec) openReader(rec, page); else Q.toast('PDF non trovato: ' + pdfPath);
+  }
+  function refreshActive(changed) {
+    if (activePageNote && activePageNote.path && changed && changed.has(activePageNote.path)) activePageNote.reload();
+  }
+
   function openReader(rec, startPage) {
     if (reader) closeReader();
     stopInk();
     const R = { rec, page: startPage || 1, doc: null, token: 0, task: null };
     reader = R;
+    try { Q.syncNow(false); } catch (e) { /* ok */ }
 
     const thumbs = h('div', { class: 'rd-thumbs', role: 'list', 'aria-label': 'Pagine' });
     const closeBtn = mkBtn('mbtn rd-close', 'Chiudi il lettore', 'a-close', closeReader);
     const count = h('span', { class: 'rd-count' }, '');
     const annot = h('button', { type: 'button', class: 'mtxt rd-annot' }, ic('a-pen'), 'Annota la pagina');
-    const top = h('div', { class: 'rd-top' }, closeBtn, h('span', { class: 'rd-name' }, baseName(rec.path)), count, h('span', { class: 'sp' }), annot);
+    const syncBtn = mkBtn('mbtn rd-sync', 'Sincronizza ora', 'i-cloud', () => {
+      activePageNote && activePageNote.flush();
+      syncBtn.classList.add('busy');
+      Promise.resolve(Q.syncNow()).finally(() => syncBtn.classList.remove('busy'));
+    });
+    const top = h('div', { class: 'rd-top' }, closeBtn, h('span', { class: 'rd-name' }, baseName(rec.path)), count, h('span', { class: 'sp' }), syncBtn, annot);
     const canvas = document.createElement('canvas');
     const ov = overlaySvg();
     const msg = h('div', { class: 'pdfmsg' }, 'Caricamento…');
@@ -1159,5 +1195,5 @@
     document.body.insertAdjacentHTML('afterbegin', SPRITE);
   }
 
-  root.ATT = { init, hydrate, stopInk, inking: () => !!session, addDrawing, pickAttachment, fmt, closeReader, assetsDir, refDir, encodeSeg, MIME, MAX };
+  root.ATT = { init, hydrate, stopInk, inking: () => !!session, addDrawing, pickAttachment, fmt, closeReader, openReaderFor, refreshActive, assetsDir, refDir, encodeSeg, MIME, MAX };
 })(window);

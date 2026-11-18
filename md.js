@@ -16,6 +16,8 @@
     const stash = [];
     const hold = (html) => '\u0000' + (stash.push(html) - 1) + '\u0000';
     text = text.replace(/`([^`]+)`/g, (m, c) => hold('<code>' + esc(c) + '</code>'));
+    text = text.replace(/\$\$([^$]+?)\$\$/g, (x, t) => hold('<span class="math" data-display="1" data-tex="' + esc(t.trim()) + '">' + esc(t) + '</span>'));
+    text = text.replace(/(^|[^\\$\w])\$([^\s$](?:[^$\n]*?[^\s$\\])?)\$(?![\w$])/g, (x, pre, t) => pre + hold('<span class="math" data-tex="' + esc(t) + '">' + esc(t) + '</span>'));
     text = esc(text);
     text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (m, alt, src) =>
       '<span class="embed" data-src="' + src + '" data-alt="' + alt + '"></span>');
@@ -64,6 +66,7 @@
       }
     }
 
+    const sl = (n) => (opts.noLines ? '' : ' data-sl="' + n + '"');
     const isBlockStart = (l) =>
       fenceRe.test(l) || headRe.test(l) || hrRe.test(l) || /^\s*>/.test(l) || listRe.test(l);
 
@@ -73,27 +76,49 @@
 
       if (fenceRe.test(line)) {
         const buf = [];
+        const start = i;
         i++;
         while (i < lines.length && !fenceRe.test(lines[i])) buf.push(lines[i++]);
         i++;
-        out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
+        out.push('<pre' + sl(start) + '><code>' + esc(buf.join('\n')) + '</code></pre>');
         continue;
+      }
+
+      const dm = /^\s*\$\$(.*)$/.exec(line);
+      if (dm) {
+        const start = i;
+        let tex = dm[1];
+        let closed = /\$\$\s*$/.test(tex);
+        if (closed) tex = tex.replace(/\$\$\s*$/, '');
+        i++;
+        const buf = [tex];
+        while (!closed && i < lines.length) {
+          const l = lines[i++];
+          if (/\$\$\s*$/.test(l)) { buf.push(l.replace(/\$\$\s*$/, '')); closed = true; } else buf.push(l);
+        }
+        if (closed) {
+          const t = buf.join('\n').trim();
+          out.push('<div class="math-block"' + sl(start) + '><span class="math" data-display="1" data-tex="' + esc(t) + '">' + esc(t) + '</span></div>');
+          continue;
+        }
+        i = start;
       }
 
       let m = line.match(headRe);
       if (m) {
         const n = m[1].length;
-        out.push('<h' + n + '>' + inline(m[2]) + '</h' + n + '>');
+        out.push('<h' + n + sl(i) + '>' + inline(m[2]) + '</h' + n + '>');
         i++;
         continue;
       }
 
-      if (hrRe.test(line)) { out.push('<hr>'); i++; continue; }
+      if (hrRe.test(line)) { out.push('<hr' + sl(i) + '>'); i++; continue; }
 
       if (/^\s*>/.test(line)) {
         const buf = [];
+        const start = i;
         while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*> ?/, ''));
-        out.push('<blockquote>' + render(buf.join('\n'), { noLines: true }) + '</blockquote>');
+        out.push('<blockquote' + sl(start) + '>' + render(buf.join('\n'), { noLines: true }) + '</blockquote>');
         continue;
       }
 
@@ -126,7 +151,7 @@
               li = '<input type="checkbox" aria-label="Attività"' + attr + (it.task ? ' checked' : '') + '> ' + li;
             }
             if (pos < items.length && items[pos].indent > indent) li += level(items[pos].indent);
-            html += '<li' + (it.task !== null ? ' class="task"' : '') + '>' + li + '</li>';
+            html += '<li' + (it.task !== null ? ' class="task"' : '') + sl(it.line) + '>' + li + '</li>';
           }
           return html + '</' + tag + '>';
         };
@@ -136,18 +161,20 @@
 
       if (line.includes('|') && i + 1 < lines.length && tableSepRe.test(lines[i + 1]) && lines[i + 1].includes('-')) {
         const head = splitRow(line);
+        const start = i;
         i += 2;
         const rows = [];
         while (i < lines.length && lines[i].trim() && lines[i].includes('|')) rows.push(splitRow(lines[i++]));
-        let html = '<div class="table-wrap"><table><thead><tr>' + head.map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+        let html = '<div class="table-wrap"' + sl(start) + '><table><thead><tr>' + head.map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
         rows.forEach((r) => { html += '<tr>' + r.map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>'; });
         out.push(html + '</tbody></table></div>');
         continue;
       }
 
       const buf = [];
+      const pstart = i;
       while (i < lines.length && lines[i].trim() && !(buf.length && isBlockStart(lines[i]))) buf.push(lines[i++]);
-      out.push('<p>' + buf.map(inline).join('<br>') + '</p>');
+      out.push('<p' + sl(pstart) + '>' + buf.map(inline).join('<br>') + '</p>');
     }
     return out.join('\n');
   }
@@ -187,7 +214,37 @@
     return found;
   }
 
-  const api = { render, extractTags, extractWikiLinks, esc };
+  /* LaTeX: KaTeX caricato solo quando serve */
+  let kx = null;
+  function loadKatex() {
+    if (kx) return kx;
+    kx = new Promise((res, rej) => {
+      if (root.katex) { res(root.katex); return; }
+      const l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = 'vendor/katex/katex.min.css';
+      document.head.appendChild(l);
+      const s = document.createElement('script');
+      s.src = 'vendor/katex/katex.min.js';
+      s.onload = () => res(root.katex);
+      s.onerror = () => { kx = null; rej(new Error('katex')); };
+      document.head.appendChild(s);
+    });
+    return kx;
+  }
+  function typeset(el) {
+    const nodes = el && el.querySelectorAll ? el.querySelectorAll('.math:not([data-done])') : [];
+    if (!nodes.length) return;
+    loadKatex().then((k) => {
+      nodes.forEach((n) => {
+        if (!n.isConnected) return;
+        try { k.render(n.dataset.tex, n, { displayMode: !!n.dataset.display, throwOnError: false, strict: 'ignore' }); } catch (e) { /* lascia il testo */ }
+        n.dataset.done = '1';
+      });
+    }).catch(() => {});
+  }
+
+  const api = { render, typeset, extractTags, extractWikiLinks, esc };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MD = api;
 })(typeof window !== 'undefined' ? window : globalThis);

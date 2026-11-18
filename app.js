@@ -110,6 +110,15 @@
     return idb.put(n);
   }
 
+  const PAGE_RE = /^(.*\.pdf)\.p(\d+)(?: \([^)]*\))?\.md$/i;
+  const pageNotes = () => [...notes.values()].filter((n) => !n.deleted && isMd(n) && isPageNote(n.path) && n.content.trim());
+  const pageLabel = (p) => { const m = PAGE_RE.exec(p); return m ? '📄 ' + m[1].split('/').pop() + ' · p. ' + m[2] : p; };
+  function pageRow(n, q) {
+    const m = PAGE_RE.exec(n.path);
+    return h('button', { class: 'row hit', type: 'button', on: { click: () => { if (m) { closeDrawer(); ATT.openReaderFor(m[1], +m[2]); } } } },
+      h('span', { class: 'name' }, pageLabel(n.path)), q ? snippet(n.content, q) : h('span', { class: 'snip' }, n.content.replace(/\s+/g, ' ').slice(0, 90)));
+  }
+
   function tagsOf(n) {
     let c = tagCache.get(n);
     if (!c || c.content !== n.content) { c = { content: n.content, tags: MD.extractTags(n.content) }; tagCache.set(n, c); }
@@ -207,6 +216,9 @@
     files: notes,
     get scroller() { return effMode() === 'split' ? $('#preview') : $('#noteView'); },
     toast,
+    refreshSidebar: () => renderSidebar(),
+    showTag: (t) => { setTag(t); openDrawer(); },
+    syncNow: (m) => sync(m !== false),
     note: () => (current && notes.get(current)) || null,
     getFile: (p) => { const n = notes.get(p); return n && !n.deleted ? n : null; },
     writeText(path, text) {
@@ -279,7 +291,7 @@
     },
   };
   ATT.init(Q);
-  $('#appVer').textContent = 'v6 (nota completa per pagina PDF)';
+  $('#appVer').textContent = 'v11 (aspetto del testo)';
 
   /* ------------------------------------------------------------------ barra laterale */
   function buildTree(list) {
@@ -341,16 +353,20 @@
         if (inPath || inText) res.push(n);
         if (res.length >= 60) break;
       }
-      if (!res.length) box.append(h('div', { class: 'list-note' }, 'Nessun risultato.'));
+      const pres = pageNotes().filter((n) => n.content.toLowerCase().includes(q)).slice(0, 30);
+      if (!res.length && !pres.length) box.append(h('div', { class: 'list-note' }, 'Nessun risultato.'));
       res.forEach((n) => {
         box.append(h('button', { class: 'row hit' + (n.path === current ? ' active' : ''), type: 'button', on: { click: () => { openNote(n.path); } } },
           h('span', { class: 'name' }, n.path.replace(/\.md$/i, '')), snippet(n.content, q)));
       });
+      pres.forEach((n) => box.append(pageRow(n, q)));
     } else if (tagFilter) {
       box.append(h('button', { class: 'row', type: 'button', on: { click: () => setTag(null) } }, h('span', { class: 'name' }, '← Tutte le note, tag #' + tagFilter)));
       const res = list.filter((n) => tagsOf(n).includes(tagFilter));
-      if (!res.length) box.append(h('div', { class: 'list-note' }, 'Nessuna nota con questo tag.'));
+      const pres = pageNotes().filter((n) => tagsOf(n).includes(tagFilter));
+      if (!res.length && !pres.length) box.append(h('div', { class: 'list-note' }, 'Nessuna nota con questo tag.'));
       res.forEach((n) => box.append(fileRow(n, 0)));
+      pres.forEach((n) => box.append(pageRow(n)));
     } else if (!list.length) {
       box.append(h('div', { class: 'list-note' }, 'Ancora nessuna nota. Creane una con il pulsante +, oppure importa i tuoi file .md.'));
     } else {
@@ -362,7 +378,7 @@
     }
 
     const counts = new Map();
-    list.forEach((n) => tagsOf(n).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
+    list.concat(pageNotes()).forEach((n) => tagsOf(n).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
     const tags = $('#tags');
     tags.replaceChildren();
     [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'it')).forEach(([t, c]) => {
@@ -468,6 +484,7 @@
 
   /* modifiche dall'editor */
   const afterEdit = debounce(() => { renderSidebar(); updateStatus(); scheduleSync(); }, 500);
+  HL.attach($('#editor'));
   const paintHl = () => { $('#hl').innerHTML = HL.html($('#editor').value); $('#hl').scrollTop = $('#editor').scrollTop; };
   $('#editor').addEventListener('scroll', () => { $('#hl').scrollTop = $('#editor').scrollTop; });
   $('#editor').addEventListener('input', () => {
@@ -479,10 +496,12 @@
     persist(n);
     updateStatus();
     afterEdit();
-    if (effMode() === 'split') livePreview();
+    if (effMode() === 'split') { markTyping(); livePreview(); }
   });
 
   /* vista affiancata: anteprima aggiornata mentre scrivi, scorrimento sincronizzato e divisore */
+  let typingUntil = 0;
+  const markTyping = () => { typingUntil = Date.now() + 900; };
   const livePreview = debounce(() => {
     const n = current && notes.get(current);
     if (!n || effMode() !== 'split' || ATT.inking()) return;
@@ -490,18 +509,22 @@
     const top = pv.scrollTop;
     renderPreview(n);
     pv.scrollTop = top;
-  }, 250);
+    HL.followPreview($('#editor'), pv, false);
+  }, 200);
+  const caretMoved = debounce(() => { if (effMode() === 'split' && document.activeElement === $('#editor') && !ATT.inking()) HL.followPreview($('#editor'), $('#preview'), false); }, 120);
 
   let syncLock = 0;
   const follow = (from, to) => {
-    if (effMode() !== 'split' || Date.now() < syncLock) return;
+    if (effMode() !== 'split' || Date.now() < syncLock || Date.now() < typingUntil) return;
     const max = from.scrollHeight - from.clientHeight;
     const r = max > 0 ? from.scrollTop / max : 0;
-    syncLock = Date.now() + 80;
+    syncLock = Date.now() + 120;
     to.scrollTop = r * (to.scrollHeight - to.clientHeight);
   };
   $('#editor').addEventListener('scroll', () => follow($('#editor'), $('#preview')));
   $('#preview').addEventListener('scroll', () => { if (!ATT.inking()) follow($('#preview'), $('#editor')); });
+  ['keyup', 'click', 'touchend'].forEach((ev) => $('#editor').addEventListener(ev, () => { markTyping(); caretMoved(); }));
+  document.addEventListener('selectionchange', () => { if (document.activeElement === $('#editor')) { markTyping(); caretMoved(); } });
 
   function setSplit(pct) {
     pct = Math.max(25, Math.min(75, pct));
@@ -797,6 +820,7 @@
     const cur = current && notes.get(current);
     if (current && (!cur || cur.deleted)) current = null;
     renderSidebar();
+    ATT.refreshActive && ATT.refreshActive(changed);
     const n = current && notes.get(current);
     if (!n) { ATT.stopInk(true); renderMain(); return; }
     if (effMode() !== 'edit') {
@@ -1029,7 +1053,7 @@
   }
   $('#btnTheme').addEventListener('click', (e) => { e.stopPropagation(); toggleThemeMenu($('#btnTheme')); });
   $('#btnTheme2').addEventListener('click', (e) => { e.stopPropagation(); toggleThemeMenu($('#btnTheme2')); });
-  themeMenu.addEventListener('click', (e) => { const b = e.target.closest('[data-theme]'); if (b) { setTheme(b.dataset.theme); closeThemeMenu(); } });
+  themeMenu.addEventListener('click', (e) => { if (e.target.closest('[data-act=style]')) { closeThemeMenu(); STY.openDialog(); return; } const b = e.target.closest('[data-theme]'); if (b) { setTheme(b.dataset.theme); closeThemeMenu(); } });
   document.addEventListener('click', (e) => { if (!themeMenu.hidden && !themeMenu.contains(e.target)) closeThemeMenu(); });
   applyTheme();
   applySide();
