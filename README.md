@@ -103,3 +103,4 @@ PDF.js (cartella `vendor`) è distribuito con licenza Apache 2.0, vedi `vendor/p
 
 ## 4.5 (v11)
 - Aspetto del testo (menu del tema, "Aspetto del testo…"): temi pronti (Quaderno, Rivista, Appunti), font e colore per titoli, testo, sorgente e codice; in "Avanzate" font e colore separati per #, ##, ###, grassetto, corsivo e tag. Le scelte restano sul dispositivo.
+- 11.1: vista affiancata con PDF e disegni nella nota: l'anteprima non perde più la posizione mentre i blocchi si ricaricano.

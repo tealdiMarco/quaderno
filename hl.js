@@ -109,7 +109,7 @@ const HL = (() => {
         target = r.top - base + frac * r.height;
       }
     }
-    if (caretLine >= total - 2) target = pv.scrollHeight;
+    if (caretLine >= total - 2) { const last = pv.lastElementChild; target = last ? last.getBoundingClientRect().bottom - base + 24 : pv.scrollHeight; }
     const h = pv.clientHeight;
     const margin = Math.min(90, h / 4);
     if (force || target < pv.scrollTop + margin || target > pv.scrollTop + h - margin) {

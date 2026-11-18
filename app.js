@@ -291,7 +291,7 @@
     },
   };
   ATT.init(Q);
-  $('#appVer').textContent = 'v11 (aspetto del testo)';
+  $('#appVer').textContent = 'v11.1 (anteprima con PDF e disegni)';
 
   /* ------------------------------------------------------------------ barra laterale */
   function buildTree(list) {
@@ -507,10 +507,25 @@
     if (!n || effMode() !== 'split' || ATT.inking()) return;
     const pv = $('#preview');
     const top = pv.scrollTop;
+    const gen = ++pvGen;
     renderPreview(n);
+    /* i blocchi PDF/disegni si ricaricano più in basso: finché non hanno la loro altezza aggiungo un po' di spazio, così la posizione non viene "tagliata" */
+    const short = top + pv.clientHeight - pv.scrollHeight;
+    pv.style.paddingBottom = short > 0 ? 'calc(24px + ' + short + 'px)' : '';
     pv.scrollTop = top;
     HL.followPreview($('#editor'), pv, false);
+    const again = () => { if (gen === pvGen && document.activeElement === $('#editor')) HL.followPreview($('#editor'), pv, false); };
+    [250, 700, 1500].forEach((ms) => setTimeout(again, ms));
+    if (pvRO) pvRO.disconnect();
+    if (window.ResizeObserver) {
+      let raf = 0;
+      pvRO = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(again); });
+      pv.querySelectorAll('.media, .embed, img, canvas, svg').forEach((e) => pvRO.observe(e));
+    }
+    setTimeout(() => { if (gen === pvGen) { pv.style.paddingBottom = ''; again(); if (pvRO) pvRO.disconnect(); } }, 2200);
   }, 200);
+  let pvGen = 0;
+  let pvRO = null;
   const caretMoved = debounce(() => { if (effMode() === 'split' && document.activeElement === $('#editor') && !ATT.inking()) HL.followPreview($('#editor'), $('#preview'), false); }, 120);
 
   let syncLock = 0;
