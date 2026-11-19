@@ -144,27 +144,41 @@
 
 <dialog id="settingsDlg">
   <form method="dialog" id="settingsForm">
-    <h2>Sincronizzazione con GitHub</h2>
-    <p class="hint">Le note restano file .md in un tuo repository. Il token resta solo su questo dispositivo: va inserito una volta su ogni telefono o computer.</p>
-    <label>Utente o organizzazione<input id="setOwner" autocomplete="off" autocapitalize="none" placeholder="es. marco"></label>
-    <label>Repository<input id="setRepo" autocomplete="off" autocapitalize="none" placeholder="es. appunti"></label>
-    <label>Branch<input id="setBranch" autocomplete="off" autocapitalize="none" placeholder="main"></label>
-    <label>Token di accesso<input id="setToken" type="password" autocomplete="off" autocapitalize="none" placeholder="github_pat_..."></label>
-    <details class="howto">
-      <summary>Come creo il token</summary>
-      <ol>
-        <li>Su GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token.</li>
-        <li>In "Repository access" scegli "Only select repositories" e seleziona solo il repo degli appunti.</li>
-        <li>In "Permissions" imposta Contents su "Read and write".</li>
-        <li>Copia il token e incollalo qui.</li>
-      </ol>
-    </details>
-    <p id="settingsMsg" class="hint" role="status"></p>
-    <p class="hint">Versione dell'app: <strong id="appVer"></strong></p>
-    <div class="dlg-actions">
-      <button type="button" id="setCancel" class="btn-secondary">Chiudi</button>
-      <button type="button" id="setClear" class="btn-secondary">Scollega</button>
-      <button type="submit" id="setSave" class="btn-primary">Salva e sincronizza</button>
+    <div class="set-top"><button type="button" id="setBack" class="sty-back" aria-label="Chiudi le impostazioni">&#8592;</button><h2>Impostazioni</h2></div>
+    <div class="set-wrap">
+      <section class="set-card">
+        <h3>Sincronizzazione con GitHub</h3>
+        <p class="hint">Le note restano file .md in un tuo repository. Il token resta solo su questo dispositivo: va inserito una volta su ogni telefono o computer.</p>
+        <label>Utente o organizzazione<input id="setOwner" autocomplete="off" autocapitalize="none" placeholder="es. marco"></label>
+        <label>Repository<input id="setRepo" autocomplete="off" autocapitalize="none" placeholder="es. appunti"></label>
+        <label>Branch<input id="setBranch" autocomplete="off" autocapitalize="none" placeholder="main"></label>
+        <label>Token di accesso<input id="setToken" type="password" autocomplete="off" autocapitalize="none" placeholder="github_pat_..."></label>
+        <details class="howto">
+          <summary>Come creo il token</summary>
+          <ol>
+            <li>Su GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token.</li>
+            <li>In "Repository access" scegli "Only select repositories" e seleziona solo il repo degli appunti.</li>
+            <li>In "Permissions" imposta Contents su "Read and write".</li>
+            <li>Copia il token e incollalo qui.</li>
+          </ol>
+        </details>
+        <p id="settingsMsg" class="hint" role="status"></p>
+        <div class="dlg-actions">
+          <button type="button" id="setClear" class="btn-secondary">Scollega</button>
+          <button type="submit" id="setSave" class="btn-primary">Salva e sincronizza</button>
+        </div>
+      </section>
+      <section class="set-card">
+        <h3>Tema generale</h3>
+        <div id="themeCard" class="sty-box"></div>
+      </section>
+      <section class="set-card accent">
+        <div style="flex:1;min-width:200px"><h3 style="margin-bottom:2px">Aspetto del testo</h3><p class="sub">Palette, colori e font di ogni elemento markdown, con anteprima dal vivo.</p></div>
+        <div class="set-dots" id="setDots"></div>
+        <button type="button" id="openStyle" class="btn-primary">Apri &#8250;</button>
+      </section>
+      <p class="hint" style="text-align:center">Versione dell'app: <strong id="appVer"></strong></p>
+      <button type="button" id="setCancel" class="btn-secondary" hidden>Chiudi</button>
     </div>
   </form>
 </dialog>

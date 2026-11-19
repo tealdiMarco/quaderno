@@ -35,6 +35,7 @@
     text = text.replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?!\*)/g, '$1<em>$2</em>');
     text = text.replace(/(^|[\s(])_([^_\n]+?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>');
     text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+    text = text.replace(/==(?=\S)(.+?)(?<=\S)==/g, '<mark class="hi">$1</mark>');
     text = text.replace(/(^|[\s(>])#([\p{L}][\p{L}\d_\/-]*)/gu, '$1<a href="#" class="tag" data-tag="$2">#$2</a>');
     return text.replace(/\u0000(\d+)\u0000/g, (m, n) => stash[+n]);
   }

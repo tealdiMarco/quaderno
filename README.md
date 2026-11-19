@@ -104,3 +104,9 @@ PDF.js (cartella `vendor`) è distribuito con licenza Apache 2.0, vedi `vendor/p
 ## 4.5 (v11)
 - Aspetto del testo (menu del tema, "Aspetto del testo…"): temi pronti (Quaderno, Rivista, Appunti), font e colore per titoli, testo, sorgente e codice; in "Avanzate" font e colore separati per #, ##, ###, grassetto, corsivo e tag. Le scelte restano sul dispositivo.
 - 11.1: vista affiancata con PDF e disegni nella nota: l'anteprima non perde più la posizione mentre i blocchi si ricaricano.
+
+## 4.6 (v12)
+- Impostazioni a schermo intero: GitHub, Tema generale (chiaro/scuro/dispositivo + cursore di luminosità, con opzione per adattare la palette) e Aspetto del testo.
+- Aspetto del testo, a tre colonne (sorgente, anteprima, barra; su telefono tre schede): generatore di palette (colore di partenza, armonia, tono, "A caso", "Nuova palette"), un colore e un font per ogni sintassi markdown (titoli 1-6, grassetto, corsivo, barrato, `==evidenziato==`, link, [[note]], tag, citazioni, elenchi, da fare, fatto, codice), sempre uguale in sorgente e anteprima. "🎲 Font" genera un abbinamento.
+- Font dal computer: carica un file (.ttf .otf .woff2) o aggiungi il nome di un font installato. Restano sul dispositivo.
+- Nuova sintassi `==evidenziato==`.

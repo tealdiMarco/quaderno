@@ -3,12 +3,12 @@ const HL = (() => {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const span = (cls, html) => '<span class="' + cls + '">' + html + '</span>';
   const mark = (s) => span('s-mark', esc(s));
-  const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(~~[^~\n]+~~)|(!?\[\[[^\]\n]+\]\])|(!?\[[^\]\n]*\]\([^)\n]*\))|(\B#[\p{L}\p{N}_/-]+)|(\$\$[^$\n]+\$\$|\$[^\s$](?:[^$\n]*?[^\s$\\])?\$(?![\w$]))/gu;
+  const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(~~[^~\n]+~~)|(!?\[\[[^\]\n]+\]\])|(!?\[[^\]\n]*\]\([^)\n]*\))|(\B#[\p{L}\p{N}_/-]+)|(==[^=\n]+==)|(\$\$[^$\n]+\$\$|\$[^\s$](?:[^$\n]*?[^\s$\\])?\$(?![\w$]))/gu;
 
   function inline(s) {
     let out = '';
     let last = 0;
-    s.replace(INLINE, (m, code, bold, ital, del, wiki, link, tag, math, idx) => {
+    s.replace(INLINE, (m, code, bold, ital, del, wiki, link, tag, hi, math, idx) => {
       out += esc(s.slice(last, idx));
       last = idx + m.length;
       if (code) out += span('s-code', mark('`') + esc(m.slice(1, -1)) + mark('`'));
@@ -20,6 +20,7 @@ const HL = (() => {
         const k = m.indexOf('](');
         out += span('s-link', mark(m.slice(0, m[0] === '!' ? 2 : 1)) + esc(m.slice(m[0] === '!' ? 2 : 1, k)) + mark('](') + span('s-url', esc(m.slice(k + 2, -1))) + mark(')'));
       } else if (tag) out += span('s-tag', esc(m));
+      else if (hi) out += span('s-hi', mark('==') + esc(m.slice(2, -2)) + mark('=='));
       else if (math) out += span('s-math', esc(m));
       return m;
     });
